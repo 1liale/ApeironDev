@@ -1,0 +1,22 @@
+version: "2.3"
+services:
+  db:
+    image: postgres
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+
+  server:
+    build: ./server
+    command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./server:/app
+    restart: always
+    ports:
+      - 8000:8000
+    depends_on:
+      - db
