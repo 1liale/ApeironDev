@@ -29,3 +29,5 @@ Originally I wanted to have an asynchronous task queue (e.g with RabbitMQ) that 
 Ideally, this would have been a better solution because I can decouple the code execution processes from the web server functions and it is much more scalable to the workload presented (i.e when the workers are taking some time to execute code, the server can be off to process new requests). I can also limit the number of vCPUs and memory allocated to each worker. However, I found this solution challenging to implement in practice and test sufficiently within the alloted time.
 
 The solution I came up with will still ensure security by placing the server within a trusted container with non-root user permissions and spawn child processes within this trusted container. In theory, each child process should inherit the same non-root access rights as the parent process, so all code should be executed safely.
+
+The limitations of my approach are that the child processes must share the same environment as the server (i.e same python version of 3.11) and the child process may only have access to packages available on the server.
