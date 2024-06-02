@@ -18,6 +18,8 @@ mdurl==0.1.2
 numpy==1.26.4
 orjson==3.10.3
 pandas==2.2.2
+psycopg==3.1.19
+psycopg-binary==3.1.19
 pydantic==2.7.2
 pydantic_core==2.18.3
 Pygments==2.18.0

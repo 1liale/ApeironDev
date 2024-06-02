@@ -15,12 +15,15 @@ The container will already have the prerequisite Python packages like `pandas` a
 
 > Created purely as a dev env, app will be served on localhost
 
-server + db: `cd server && docker compose up` \
+server + db: `cd backend && docker compose up` \
 client: `cd frontend && npm run dev`
 
 server: `port 8000` \
-postgres db: `port 5432` \
+sqlite db: `/backend/server/code_results.db` \
 client: `port 5173`
+
+![SQLite DB](image-1.png)
+A view of the valid code execution results stored in the DB
 
 ## Challenges encountered and my solution to the problem
 

@@ -1,14 +1,19 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from models import CodeInput
+from sqlalchemy.orm import sessionmaker
 
-DB_URL = 'sqlite:///./coderesults.db'
+DB_URL = "sqlite:///./code_results.db"
 
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+# Create a new SQLAlchemy engine instance
+engine = create_engine(DB_URL, echo=True, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# Used as the base for our ORM models
 Base = declarative_base()
 
-def save_to_db(result: str, code_input: CodeInput):
-    pass
+def get_db():
+    try:
+        db = SessionLocal()
+        yield db
+    finally:
+        db.close()
