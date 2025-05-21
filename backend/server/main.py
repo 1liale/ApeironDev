@@ -1,44 +1,62 @@
-import subprocess
-from fastapi import FastAPI, Depends
+import uvicorn
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-
-from models import Base, ExecResult
-from database import engine, get_db
-from sqlalchemy.orm import Session
-
-Base.metadata.create_all(bind=engine)
+from google.cloud import pubsub_v1
+import json
+import os
 
 app = FastAPI()
 
-# Enable CORS
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "your-gcp-project")
+TOPIC_ID = "code-execution-requests"
+
+try:
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
+except Exception as e:
+    print(f"Failed to initialize Pub/Sub publisher: {e}")
+    publisher = None
+    topic_path = None
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["GET", "POST"],
+    allow_headers=["*"],
 )
 
-# Define schemas
 class CodeInput(BaseModel):
     code: str
-    stdin: str
-    isSubmit: bool
+    stdin: str | None = None
+    isSubmit: bool = False
 
-class CodeOutput(BaseModel):
-    result: str
-    status: int
+class APIResponse(BaseModel):
+    message: str
+    data: dict | None = None
 
-# runcode enpoint handles code run requests sent by the user
-@app.post("/runcode", response_model=CodeOutput)
-async def handle_run_code(code_input: CodeInput, db: Session = Depends(get_db)):
+@app.post("/runcode", response_model=APIResponse)
+async def request_code_execution(code_input: CodeInput):
+    if not publisher or not topic_path:
+        raise HTTPException(status_code=503, detail="Pub/Sub service is not available.")
     try:
-        result = subprocess.check_output(['python3', '-c', code_input.code] + code_input.stdin.split(), text=True, timeout=10, stderr=subprocess.STDOUT)
-        # Saves code and results for valid submissions
-        if code_input.isSubmit:
-            db.add(ExecResult(src=code_input.code, stdin=code_input.stdin, res=result))
-            db.commit()
-        return {"result": result, "status": 0}
-    # Gracefully handles error and returns error outputs to the user
-    except subprocess.CalledProcessError as e:
-        return {"result": str(e.output), "status": 1}
+        message_data = code_input.model_dump_json().encode("utf-8")
+        future = publisher.publish(topic_path, message_data)
+        message_id = future.result()
+        return {"message": "Code execution request published successfully", "data": {"message_id": message_id}}
+    except Exception as e:
+        print(f"Error publishing to Pub/Sub: {e}")
+        raise HTTPException(status_code=500, detail="Failed to publish code execution request.")
+
+@app.get("/health")
+async def health_check():
+    if publisher and topic_path:
+        return {"status": "API is healthy, Pub/Sub publisher initialized"}
+    else:
+        return {"status": "API is unhealthy, Pub/Sub publisher failed to initialize"}
+
+if __name__ == "__main__":
+    if PROJECT_ID == "your-gcp-project" and publisher is None:
+        print("Warning: GOOGLE_CLOUD_PROJECT is not set correctly or Pub/Sub initialization failed.")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
