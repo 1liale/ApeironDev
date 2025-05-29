@@ -1,5 +1,0 @@
-fastapi>=0.111.0
-uvicorn>=0.27.0
-google-cloud-datastore>=2.15.1
-google-cloud-pubsub>=2.13.0
-pydantic>=2.5.0

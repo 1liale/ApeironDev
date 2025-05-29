@@ -1,0 +1,12 @@
+fastapi
+pydantic
+uvicorn[standard]
+pytest
+
+numpy
+scipy
+pandas
+requests
+beautifulsoup4
+lxml
+sympy

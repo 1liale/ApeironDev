@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+
+# Pytest
+.pytest_cache/
+
+# Virtual environments
+.venv/
+
+# Distribution / packaging
+build/
+dist/
+
+# Environment variables
+.env
+*.env
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Instance/Secret files
+instance/
+secrets.py 
