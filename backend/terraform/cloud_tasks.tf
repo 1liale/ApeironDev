@@ -48,6 +48,15 @@ resource "google_service_account" "code_execution_worker_sa" {
   display_name = "Code Execution Worker Service Account"
 }
 
+# Grant the Cloud Tasks Service Agent permission to act as the Code Execution Worker SA
+# This is required for Cloud Tasks to generate an OIDC token for the worker SA.
+resource "google_service_account_iam_member" "tasks_agent_can_act_as_worker_sa" {
+  provider           = google
+  service_account_id = google_service_account.code_execution_worker_sa.name // The SA that will be impersonated
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com" // The Cloud Tasks Service Agent
+}
+
 data "google_iam_policy" "tasks_invoker_policy" {
   provider = google
   binding {
