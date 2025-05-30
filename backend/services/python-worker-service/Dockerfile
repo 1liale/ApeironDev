@@ -36,8 +36,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 
 # Expose the port the app runs on
-EXPOSE 8081
+ENV PORT 8080
 
-# Command to run the application
-# Use the PORT environment variable provided by Cloud Run, default to 8081 if not set (for local testing)
-CMD exec uvicorn worker:app --host 0.0.0.0 --port ${PORT:-8081}
+CMD exec uvicorn worker:app --host 0.0.0.0 --port ${PORT}

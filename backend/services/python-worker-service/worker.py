@@ -149,5 +149,5 @@ async def health_check():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Starting Python worker service locally on port {port} with log level {LOG_LEVEL}")
-    # For uvicorn CLI, log_level set via basicConfig is usually sufficient or use --log-level
-    uvicorn.run("worker:app", host="0.0.0.0", port=port, reload=True if LOG_LEVEL == "DEBUG" else False) 
+  
+    uvicorn.run(app, host="0.0.0.0", port=port) 
