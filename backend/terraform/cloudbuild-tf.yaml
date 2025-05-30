@@ -1,0 +1,44 @@
+steps:
+  # === Stage: Terraform Init ===
+  - name: 'hashicorp/terraform:1.5.7' # Use a specific version
+    id: Terraform Init
+    entrypoint: terraform
+    args:
+      - init
+      - -input=false
+    dir: 'backend/terraform' # Specify the directory where terraform files are
+
+  # === Stage: Terraform Plan ===
+  - name: 'hashicorp/terraform:1.5.7'
+    id: Terraform Plan
+    entrypoint: terraform
+    args:
+      - plan
+      - -input=false
+      - -out=tfplan # Save the plan
+    dir: 'backend/terraform'
+    waitFor: ['Terraform Init']
+
+  # === Stage: Terraform Apply ===
+  - name: 'hashicorp/terraform:1.5.7'
+    id: Terraform Apply
+    entrypoint: terraform
+    args:
+      - apply
+      - -input=false
+      - -auto-approve
+      - tfplan # Apply the saved plan
+    dir: 'backend/terraform'
+    waitFor: ['Terraform Plan']
+
+# Tell Cloud Build to use the custom CI/CD service account
+serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/${_CICD_RUNNER_SA_EMAIL}'
+
+# Substitutions that can be passed by the trigger
+substitutions:
+  _CICD_RUNNER_SA_EMAIL: '' # Will be populated by the trigger
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # Add machineType if needed, e.g., for more complex Terraform runs
+  # machineType: 'N1_HIGHCPU_8' 

@@ -1,18 +1,22 @@
 terraform {
-  required_providers {
-    google = {
-      source = "hashicorp/google"
-      version = ">= 4.34.0"
-    }
+  backend "gcs" {
+    bucket = "remotepythonide-tfstate"
+    prefix = "terraform/state"
   }
 }
 
-resource "random_id" "default" {
-  byte_length = 8
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
 }
 
-resource "google_cloud_run_service" "default" {
-  name = "code-execution-service-${random_id.default.hex}"
-  location = "us-central1"
-  template {}
+variable "gcp_project_id" {
+  description = "The GCP project ID."
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "The GCP region for resources."
+  type        = string
+  default     = "us-east1"
 }

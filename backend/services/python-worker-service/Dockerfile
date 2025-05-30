@@ -36,7 +36,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 
 # Expose the port the app runs on
-EXPOSE 8080
+EXPOSE 8081
 
 # Command to run the application
-CMD ["uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8081"]

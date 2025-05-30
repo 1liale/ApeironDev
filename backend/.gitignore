@@ -15,6 +15,15 @@ dist/
 .env
 *.env
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+*.tfplan
+.terraform.lock.hcl
+
 # IDE / Editor specific
 .vscode/
 .idea/
@@ -28,4 +37,28 @@ logs/
 
 # Instance/Secret files
 instance/
-secrets.py 
+secrets.py
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Node/npm (if any JS tooling is used)
+node_modules/
+
+# Coverage reports
+coverage*
+*.coverprofile
+*.cov
+
+# Misc
+*.swp
+*~ 

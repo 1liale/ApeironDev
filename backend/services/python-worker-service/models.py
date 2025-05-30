@@ -1,10 +1,11 @@
 from typing import Optional
 from pydantic import BaseModel
 
-class CodeExecutionRequest(BaseModel):
+class CloudTaskPayload(BaseModel):
     job_id: str
     code: str
-    input_data: Optional[str] = None
+    language: str # Language field, though python-worker only handles python
+    input: str = ""
 
 class CodeExecutionResult(BaseModel):
     output: Optional[str] = None
