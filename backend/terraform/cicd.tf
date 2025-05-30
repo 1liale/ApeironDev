@@ -64,6 +64,30 @@ resource "google_project_iam_member" "cicd_cloudbuild_connection_admin" {
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
+# Grant permissions to manage project IAM policies (needed for google_project_iam_member resources)
+resource "google_project_iam_member" "cicd_project_iam_admin" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/resourcemanager.projectIamAdmin"
+  member   = "serviceAccount:${google_service_account.cicd_runner.email}"
+}
+
+# Grant permissions for Cloud Tasks (at least viewer for 'get' operations)
+resource "google_project_iam_member" "cicd_cloud_tasks_viewer" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/cloudtasks.viewer" # Consider roles like cloudtasks.enqueuer or cloudtasks.admin if more perms are needed
+  member   = "serviceAccount:${google_service_account.cicd_runner.email}"
+}
+
+# Grant permissions for Firestore
+resource "google_project_iam_member" "cicd_firestore_user" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/datastore.user" # This role grants access to Firestore in Native mode
+  member   = "serviceAccount:${google_service_account.cicd_runner.email}"
+}
+
 variable "github_owner" {
   description = "The owner of the GitHub repository (username or organization)."
   type        = string
