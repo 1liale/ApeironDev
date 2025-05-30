@@ -72,11 +72,11 @@ resource "google_project_iam_member" "cicd_project_iam_admin" {
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
-# Grant permissions for Cloud Tasks (at least viewer for 'get' operations)
-resource "google_project_iam_member" "cicd_cloud_tasks_viewer" {
+# Grant permissions for Cloud Tasks
+resource "google_project_iam_member" "cicd_cloud_tasks_admin" {
   provider = google
   project  = var.gcp_project_id
-  role     = "roles/cloudtasks.viewer" # Consider roles like cloudtasks.enqueuer or cloudtasks.admin if more perms are needed
+  role     = "roles/cloudtasks.admin" 
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
