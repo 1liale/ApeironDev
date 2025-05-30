@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_URL="http://localhost:8080"
+BASE_URL="https://api-service-628716652336.us-east1.run.app/"
 
 echo "POST /execute..."
 JSON_PAYLOAD='{"code":"print(\"Hello, world!\")","language":"python"}'

@@ -6,36 +6,36 @@ import uvicorn
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
-from google.cloud import firestore
+from google.cloud import datastore
 from models import CloudTaskPayload
 
 # Environment Variables
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-FIRESTORE_COLLECTION_JOBS = os.getenv("FIRESTORE_COLLECTION_JOBS", "jobs")
+DATASTORE_KIND_JOBS = os.getenv("DATASTORE_KIND_JOBS", "Job")
 DEFAULT_EXECUTION_TIMEOUT_SEC = int(os.getenv("DEFAULT_EXECUTION_TIMEOUT_SEC", "10"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 app = FastAPI()
-firestore_client = None
+datastore_client = None
 
 logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 if not GCP_PROJECT_ID:
-    logger.critical("GCP_PROJECT_ID environment variable not set. Firestore client cannot be initialized.")
-    # The service will likely be unhealthy and fail requests needing Firestore.
+    logger.critical("GCP_PROJECT_ID environment variable not set. Datastore client cannot be initialized.")
+    # The service will likely be unhealthy and fail requests needing Datastore.
 
 @app.on_event("startup")
 async def startup_event():
-    global firestore_client
+    global datastore_client
     if GCP_PROJECT_ID:
         try:
-            firestore_client = firestore.Client(project=GCP_PROJECT_ID)
-            logger.info(f"Firestore client initialized for project {GCP_PROJECT_ID}.")
+            datastore_client = datastore.Client(project=GCP_PROJECT_ID)
+            logger.info(f"Datastore client initialized for project {GCP_PROJECT_ID}.")
         except Exception as e:
-            logger.critical(f"Failed to initialize Firestore client: {e}", exc_info=True)
+            logger.critical(f"Failed to initialize Datastore client: {e}", exc_info=True)
     else:
-        logger.warning("Firestore client not initialized due to missing GCP_PROJECT_ID.")
+        logger.warning("Datastore client not initialized due to missing GCP_PROJECT_ID.")
 
 def set_execution_limits(
     cpu_time_sec: int = 5, 
@@ -82,19 +82,25 @@ async def execute_task_endpoint(payload: CloudTaskPayload):
     job_id = payload.job_id
     logger.info(f"Processing job_id: {job_id}, lang: {payload.language}")
 
-    if not firestore_client:
-        logger.error(f"Job {job_id}: Firestore client not available. Task cannot be processed.")
-        raise HTTPException(status_code=503, detail="Worker service unavailable: Firestore not configured.")
+    if not datastore_client:
+        logger.error(f"Job {job_id}: Datastore client not available. Task cannot be processed.")
+        raise HTTPException(status_code=503, detail="Worker service unavailable: Datastore not configured.")
 
-    job_doc_ref = firestore_client.collection(FIRESTORE_COLLECTION_JOBS).document(job_id)
+    key = datastore_client.key(DATASTORE_KIND_JOBS, job_id)
 
     try:
-        job_doc_ref.update({
-            "status": "processing",
-            "processing_started_at": datetime.now(timezone.utc)
-        })
+        with datastore_client.transaction():
+            entity = datastore_client.get(key)
+            if entity:
+                entity["status"] = "processing"
+                entity["processing_started_at"] = datetime.now(timezone.utc)
+                datastore_client.put(entity)
+            else:
+                logger.warning(f"Job {job_id}: Document not found in Datastore for update to 'processing'. This might happen if the API service hasn't created it yet or if there's a race condition.")
+                # Potentially create it here if it must exist, or rely on API service to have created it.
+                # For now, we'll assume API service creates it.
     except Exception as e:
-        logger.error(f"Job {job_id}: Failed to update Firestore to 'processing': {e}")
+        logger.error(f"Job {job_id}: Failed to update Datastore to 'processing': {e}")
         # Proceeding, but this job might seem stuck in "queued" if initial GET was fast.
 
     if payload.language.lower() != "python":
@@ -102,49 +108,69 @@ async def execute_task_endpoint(payload: CloudTaskPayload):
 
     output, error_details, exec_status_code = execute_python_code(job_id, payload.code, payload.input or "")
 
-    firestore_update_data = {"completed_at": datetime.now(timezone.utc)}
-
-    if exec_status_code == 0:
-        firestore_update_data["status"] = "completed"
-        firestore_update_data["output"] = output
-        logger.info(f"Job {job_id}: Execution successful.")
-    else: # Covers user error, timeout, internal error
-        firestore_update_data["status"] = "failed"
-        firestore_update_data["error"] = error_details
-        if exec_status_code == 1:
-            logger.warning(f"Job {job_id}: Execution failed (user code error). Details in Firestore.")
-        elif exec_status_code == 2:
-            logger.warning(f"Job {job_id}: Execution failed (timeout). Details in Firestore.")
-        elif exec_status_code == 3:
-            logger.error(f"Job {job_id}: Execution failed (internal worker error). Details in Firestore.")
-            # This is a worker problem. Failure is logged to Firestore.
-            # Return 200 to Cloud Tasks so it doesn't retry indefinitely.
-    
+    # Prepare data for Datastore update
+    # We will update the existing entity or create it if it somehow wasn't found before
+    # Using a transaction for the final update is good practice.
     try:
-        job_doc_ref.update(firestore_update_data)
+        with datastore_client.transaction():
+            entity = datastore_client.get(key) # Get the latest version
+            if not entity:
+                # This case should be rare if the API service creates the job entry first.
+                # If it can happen, initialize a new entity.
+                logger.warning(f"Job {job_id}: Entity not found before final update. Creating a new one.")
+                entity = datastore.Entity(key=key)
+                # Populate fields that api-service would have set, if necessary, or rely on partial update
+                entity["job_id"] = job_id # Though key contains it
+                entity["language"] = payload.language
+                entity["code"] = payload.code # Consider if needed
+                entity["input"] = payload.input
+                # entity["submitted_at"] = datetime.now(timezone.utc) # Or fetch from API if possible
+            
+            entity["completed_at"] = datetime.now(timezone.utc)
+
+            if exec_status_code == 0:
+                entity["status"] = "completed"
+                entity["output"] = output
+                logger.info(f"Job {job_id}: Execution successful.")
+            else:
+                entity["status"] = "failed"
+                entity["error"] = error_details
+
+                if exec_status_code == 1:
+                    logger.warning(f"Job {job_id}: Execution failed (user code error). Details in Datastore.")
+                elif exec_status_code == 2:
+                    logger.warning(f"Job {job_id}: Execution failed (timeout). Details in Datastore.")
+                elif exec_status_code == 3:
+                    logger.error(f"Job {job_id}: Execution failed (internal worker error). Details in Datastore.")
+            
+            datastore_client.put(entity)
+
     except Exception as e:
-        logger.critical(f"Job {job_id}: FAILED TO SAVE FINAL RESULTS to Firestore: {e}. Data may be lost.", exc_info=True)
+        logger.critical(f"Job {job_id}: FAILED TO SAVE FINAL RESULTS to Datastore: {e}. Data may be lost.", exc_info=True)
         # Critical: Job ran, but results not saved. Return 500 to signal infra issue.
         raise HTTPException(status_code=500, detail=f"Critical error saving results for job {job_id}.")
 
     return {"job_id": job_id, "message": "Execution task processed."}
 
-@app.get("/health")
-async def health_check():
-    if GCP_PROJECT_ID and firestore_client:
-        # Perform a quick check, e.g., try to get a non-existent document metadata (fast, low cost)
-        try:
-            firestore_client.collection(FIRESTORE_COLLECTION_JOBS).document("__healthcheck__").get(timeout=1.0) # Short timeout
-            return {"status": "healthy", "firestore_status": "connected"}
-        except Exception as e:
-            logger.warning(f"Health check: Firestore connectivity issue: {e}")
-            return {"status": "degraded", "firestore_status": "connectivity_issue"}, 503
-    elif GCP_PROJECT_ID and not firestore_client:
-         logger.warning("Health check: Firestore client not initialized (startup failed?).")
-         return {"status": "unhealthy", "firestore_status": "disconnected (initialization_failed)"}, 503
-    else:
-        logger.error("Health check: GCP_PROJECT_ID not configured.")
-        return {"status": "unhealthy", "firestore_status": "GCP_PROJECT_ID_not_configured"}, 503
+# @app.get("/health")
+# async def health_check():
+#     if GCP_PROJECT_ID and datastore_client:
+#         # Perform a quick check, e.g., try to get a non-existent document metadata (fast, low cost)
+#         try:
+#             key = datastore_client.key(DATASTORE_KIND_JOBS, "__healthcheck__")
+#             datastore_client.get(key) # Raises google.cloud.exceptions.NotFound if not found, which is fine.
+#             return {"status": "healthy", "datastore_status": "connected"}
+#         except Exception as e:
+#             if "NotFound" in str(e): # Crude check for NotFound exception
+#                 return {"status": "healthy", "datastore_status": "connected (test_key_not_found)"}
+#             logger.warning(f"Health check: Datastore connectivity issue: {e}")
+#             return {"status": "degraded", "datastore_status": "connectivity_issue"}, 503
+#     elif GCP_PROJECT_ID and not datastore_client:
+#          logger.warning("Health check: Datastore client not initialized (startup failed?).")
+#          return {"status": "unhealthy", "datastore_status": "disconnected (initialization_failed)"}, 503
+#     else:
+#         logger.error("Health check: GCP_PROJECT_ID not configured.")
+#         return {"status": "unhealthy", "datastore_status": "GCP_PROJECT_ID_not_configured"}, 503
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

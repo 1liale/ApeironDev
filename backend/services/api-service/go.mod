@@ -6,14 +6,17 @@ toolchain go1.23.9
 
 require (
 	cloud.google.com/go/cloudtasks v1.13.3
-	cloud.google.com/go/firestore v1.18.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
-	google.golang.org/grpc v1.72.2
 	google.golang.org/protobuf v1.36.6
+)
+
+require (
+	cloud.google.com/go/datastore v1.20.0
+	google.golang.org/grpc v1.72.2 // indirect
 )
 
 require (
@@ -22,7 +25,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	cloud.google.com/go/iam v1.5.0 // indirect
-	cloud.google.com/go/longrunning v0.6.6 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect

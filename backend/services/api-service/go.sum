@@ -8,12 +8,10 @@ cloud.google.com/go/cloudtasks v1.13.3 h1:rXdznKjCa7WpzmvR2plrn2KJ+RZC1oYxPiRWNQ
 cloud.google.com/go/cloudtasks v1.13.3/go.mod h1:f9XRvmuFTm3VhIKzkzLCPyINSU3rjjvFUsFVGR5wi24=
 cloud.google.com/go/compute/metadata v0.6.0 h1:A6hENjEsCDtC1k8byVsgwvVcioamEHvZ4j01OwKxG9I=
 cloud.google.com/go/compute/metadata v0.6.0/go.mod h1:FjyFAW1MW0C203CEOMDTu3Dk1FlqW3Rga40jzHL4hfg=
-cloud.google.com/go/firestore v1.18.0 h1:cuydCaLS7Vl2SatAeivXyhbhDEIR8BDmtn4egDhIn2s=
-cloud.google.com/go/firestore v1.18.0/go.mod h1:5ye0v48PhseZBdcl0qbl3uttu7FIEwEYVaWm0UIEOEU=
+cloud.google.com/go/datastore v1.20.0 h1:NNpXoyEqIJmZFc0ACcwBEaXnmscUpcG4NkKnbCePmiM=
+cloud.google.com/go/datastore v1.20.0/go.mod h1:uFo3e+aEpRfHgtp5pp0+6M0o147KoPaYNaPAKpfh8Ew=
 cloud.google.com/go/iam v1.5.0 h1:QlLcVMhbLGOjRcGe6VTGGTyQib8dRLK2B/kYNV0+2xs=
 cloud.google.com/go/iam v1.5.0/go.mod h1:U+DOtKQltF/LxPEtcDLoobcsZMilSRwR7mgNL7knOpo=
-cloud.google.com/go/longrunning v0.6.6 h1:XJNDo5MUfMM05xK3ewpbSdmt7R2Zw+aQEMbdQR65Rbw=
-cloud.google.com/go/longrunning v0.6.6/go.mod h1:hyeGJUrPHcx0u2Uu1UFSoYZLn4lkMrccJig0t4FI7yw=
 github.com/bytedance/sonic v1.11.6 h1:oUp34TzMlL+OY1OUWxHqsdkgC/Zfc85zGqw9siXjrc0=
 github.com/bytedance/sonic v1.11.6/go.mod h1:LysEHSvpvDySVdC2f87zGWf6CIKJcAvqab1ZaiQtds4=
 github.com/bytedance/sonic/loader v0.1.1 h1:c+e5Pt1k/cy5wMveRDyk2X4B9hF4g7an8N3zCYjJFNM=
