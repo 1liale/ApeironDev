@@ -10,8 +10,6 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-# -ldflags="-w -s" strips debug information and symbol table, reducing binary size
-# CGO_ENABLED=0 disables Cgo, producing a static binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api-service main.go
 
 # Start a new, smaller stage from scratch
@@ -25,7 +23,7 @@ COPY --from=builder /api-service .
 # COPY --from=builder /app/config /root/config
 
 
-# Expose port 8080 to the outside world
+# Expose port 8080 (for running locally)
 EXPOSE 8080
 
 # Command to run the executable
