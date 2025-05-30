@@ -21,8 +21,6 @@ resource "google_project_iam_member" "api_service_datastore_user" {
 }
 
 # python-worker-service needs to write to Firestore (job output and status updates)
-# This is now handled by the shared 'code_execution_worker_sa' which has project-level datastore.user role
-
 resource "google_project_iam_member" "code_execution_worker_datastore_user" {
   provider = google
   project  = var.gcp_project_id
