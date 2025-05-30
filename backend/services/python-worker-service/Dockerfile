@@ -9,6 +9,7 @@ RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY worker.py .
+COPY models.py .
 
 # Stage 2: Final build
 FROM python:3.11-slim
@@ -24,6 +25,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --from=builder /app/worker.py .
+COPY --from=builder /app/models.py .
 
 # Ensure the app directory is owned by the non-root user
 # This step helps if you need to write to /app, but we aim for no FS write access for user code.
