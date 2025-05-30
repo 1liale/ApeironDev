@@ -25,7 +25,7 @@ resource "google_cloud_run_service" "python_worker" {
       containers {
         image = "us-east1-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.default.repository_id}/${local.python_worker_service_name}:latest" # Placeholder
         ports {
-          container_port = 8000 # Default FastAPI port, adjust if your Dockerfile exposes a different one
+          container_port = 8080
         }
         resources {
           limits = {
