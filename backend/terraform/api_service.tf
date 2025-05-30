@@ -74,4 +74,20 @@ resource "google_cloud_run_service_iam_member" "api_service_invoker" {
   service  = local.api_service_name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+resource "google_project_iam_member" "api_service_sa_token_creator" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/iam.serviceAccountTokenCreator"
+  member   = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
+# Allow api-service-sa to act as (impersonate) python-worker-sa
+# This is required for creating tasks on a queue that uses python-worker-sa for OIDC.
+resource "google_service_account_iam_member" "api_service_can_act_as_python_worker_sa" {
+  provider           = google
+  service_account_id = google_service_account.code_execution_worker_sa.name # The SA to grant permissions ON (code-exec-worker-sa)
+  role               = "roles/iam.serviceAccountUser"                 # Grants iam.serviceAccounts.actAs
+  member             = "serviceAccount:${google_service_account.api_service_sa.email}" # The SA being granted permission
 } 
