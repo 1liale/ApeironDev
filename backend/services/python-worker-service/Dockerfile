@@ -39,4 +39,5 @@ ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 EXPOSE 8081
 
 # Command to run the application
-CMD ["uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8081"]
+# Use the PORT environment variable provided by Cloud Run, default to 8081 if not set (for local testing)
+CMD exec uvicorn worker:app --host 0.0.0.0 --port ${PORT:-8081}
