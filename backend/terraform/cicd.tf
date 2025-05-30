@@ -72,6 +72,14 @@ resource "google_project_iam_member" "cicd_project_iam_admin" {
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
+# Grant permissions to manage other Service Accounts' IAM policies
+resource "google_project_iam_member" "cicd_service_account_admin" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/iam.serviceAccountAdmin"
+  member   = "serviceAccount:${google_service_account.cicd_runner.email}"
+}
+
 # Grant permissions for Cloud Tasks
 resource "google_project_iam_member" "cicd_cloud_tasks_admin" {
   provider = google
