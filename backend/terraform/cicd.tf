@@ -79,80 +79,10 @@ variable "github_app_installation_id" {
   type        = string
 }
 
-variable "github_pat" {
-  description = "The GitHub Personal Access Token (PAT) with repo scope."
-  type        = string
-  sensitive   = true
-}
-
-# Create a secret containing the personal access token
-resource "google_secret_manager_secret" "github_token_secret" {
-  provider  = google
-  project   = var.gcp_project_id
-  secret_id = "cloudbuild-github-pat"
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "github_token_secret_version" {
-  provider    = google
-  secret      = google_secret_manager_secret.github_token_secret.id
-  secret_data = var.github_pat
-}
-
 # Grant the default Cloud Build Service Agent access to the PAT secret
 data "google_project" "project" {
   provider   = google
   project_id = var.gcp_project_id
-}
-
-data "google_iam_policy" "serviceagent_secretAccessor" {
-  provider = google
-  binding {
-    role    = "roles/secretmanager.secretAccessor"
-    members = ["serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"]
-  }
-}
-
-resource "google_secret_manager_secret_iam_policy" "policy" {
-  provider    = google
-  project     = google_secret_manager_secret.github_token_secret.project
-  secret_id   = google_secret_manager_secret.github_token_secret.secret_id
-  policy_data = data.google_iam_policy.serviceagent_secretAccessor.policy_data
-}
-
-# Google Cloud Build v2 GitHub Connection
-resource "google_cloudbuildv2_connection" "primary_github" {
-  provider = google
-  project  = var.gcp_project_id
-  location = var.gcp_region
-  name     = "primary-github-connection"
-
-  github_config {
-    app_installation_id = var.github_app_installation_id
-    authorizer_credential {
-      oauth_token_secret_version = google_secret_manager_secret_version.github_token_secret_version.id
-    }
-  }
-
-  depends_on = [
-    google_secret_manager_secret_iam_policy.policy,
-    google_project_iam_member.cicd_cloudbuild_connection_admin
-  ]
-}
-
-# Link the GitHub repository to the Cloud Build connection
-resource "google_cloudbuildv2_repository" "github_repo" {
-  provider = google
-  project = var.gcp_project_id
-  location = var.gcp_region
-  name = var.github_repo_name
-  parent_connection = google_cloudbuildv2_connection.primary_github.id
-  remote_uri = "https://github.com/${var.github_owner}/${var.github_repo_name}.git"
-
-  depends_on = [google_cloudbuildv2_connection.primary_github]
 }
 
 # Cloud Build Trigger for Terraform apply
@@ -161,12 +91,13 @@ resource "google_cloudbuild_trigger" "terraform_apply" {
   project     = var.gcp_project_id
   name        = "terraform-apply-trigger"
   description = "Triggers Terraform apply on changes to backend/terraform/**"
-  location    = var.gcp_region
+  location    = "global"
 
-  repository_event_config {
-    repository = google_cloudbuildv2_repository.github_repo.id
-    push {
-      branch = "^refs/heads/main$"
+  github {
+    owner = var.github_owner
+    name  = var.github_repo_name
+    pull_request {
+      branch          = "^main$"
     }
   }
 
@@ -176,10 +107,6 @@ resource "google_cloudbuild_trigger" "terraform_apply" {
     _CICD_RUNNER_SA_EMAIL = google_service_account.cicd_runner.email
   }
   service_account = "projects/${var.gcp_project_id}/serviceAccounts/${google_service_account.cicd_runner.email}"
-  depends_on = [
-    google_cloudbuildv2_connection.primary_github,
-    google_cloudbuildv2_repository.github_repo
-  ]
 }
 
 # Output the email of the created CI/CD service account
@@ -194,13 +121,13 @@ resource "google_cloudbuild_trigger" "api_service_build_deploy" {
   project     = var.gcp_project_id
   name        = "api-service-build-deploy-trigger"
   description = "Triggers build and deploy for api-service on changes to its directory"
-  location    = var.gcp_region # Ensure this is where your connection and repo are if regional, or global
+  location    = "global"
 
-  repository_event_config {
-    repository = google_cloudbuildv2_repository.github_repo.id
-    push {
-      branch = "^refs/heads/main$" # Or your development branch
-      invert_regex = false
+  github {
+    owner = var.github_owner
+    name  = var.github_repo_name
+    pull_request {
+      branch          = "^main$"
     }
   }
 
@@ -212,8 +139,6 @@ resource "google_cloudbuild_trigger" "api_service_build_deploy" {
     _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
     _GCP_REGION                = var.gcp_region
   }
-
-  depends_on = [google_cloudbuildv2_repository.github_repo]
 }
 
 # Cloud Build Trigger for python-worker-service build and deploy
@@ -222,13 +147,13 @@ resource "google_cloudbuild_trigger" "python_worker_build_deploy" {
   project     = var.gcp_project_id
   name        = "python-worker-build-deploy-trigger"
   description = "Triggers build and deploy for python-worker-service on changes to its directory"
-  location    = var.gcp_region # Ensure this is where your connection and repo are if regional, or global
+  location    = "global"
 
-  repository_event_config {
-    repository = google_cloudbuildv2_repository.github_repo.id
-    push {
-      branch = "^refs/heads/main$" # Or your development branch
-      invert_regex = false
+  github {
+    owner = var.github_owner
+    name  = var.github_repo_name
+    pull_request {
+      branch          = "^main$"
     }
   }
 
@@ -240,6 +165,4 @@ resource "google_cloudbuild_trigger" "python_worker_build_deploy" {
     _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
     _GCP_REGION                = var.gcp_region
   }
-
-  depends_on = [google_cloudbuildv2_repository.github_repo]
 } 
