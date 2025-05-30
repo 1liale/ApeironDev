@@ -37,3 +37,6 @@ serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/${_CICD_RUNNER_SA_EMAIL}'
 # Substitutions that can be passed by the trigger
 substitutions:
   _CICD_RUNNER_SA_EMAIL: '' # Will be populated by the trigger
+
+options:
+  logging: CLOUD_LOGGING_ONLY
