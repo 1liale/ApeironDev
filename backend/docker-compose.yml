@@ -1,10 +1,25 @@
-version: "2.3"
+version: "3.8"
 services:
-  server:
-    build: ./server
-    command: bash -c "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
-    volumes:
-      - ./server:/app
-    restart: always
+  api-service:
+    build:
+      context: ./services/api-service
+      dockerfile: Dockerfile
     ports:
-      - 8000:8000
+      - "8080:8080"
+    volumes:
+      - ./services/api-service:/app # For Go, WORKDIR in Dockerfile is /app for dev builds
+    # env_file:
+    #   - ./services/api-service/.env 
+    restart: always
+
+  python-worker-service:
+    build:
+      context: ./services/python-worker-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081" 
+    volumes:
+      - ./services/python-worker-service:/app 
+    # env_file:
+    #   - ./services/python-worker-service/.env 
+    restart: always

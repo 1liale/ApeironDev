@@ -1,0 +1,7 @@
+fastapi
+pydantic
+uvicorn[standard]
+pytest
+numpy
+scipy
+google-cloud-firestore

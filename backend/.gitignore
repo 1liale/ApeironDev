@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+
+# Pytest
+.pytest_cache/
+
+# Virtual environments
+.venv/
+
+# Distribution / packaging
+build/
+dist/
+
+# Environment variables
+.env
+*.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+*.tfplan
+.terraform.lock.hcl
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Instance/Secret files
+instance/
+secrets.py
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Node/npm (if any JS tooling is used)
+node_modules/
+
+# Coverage reports
+coverage*
+*.coverprofile
+*.cov
+
+# Misc
+*.swp
+*~ 
