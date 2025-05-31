@@ -57,25 +57,25 @@ resource "google_service_account_iam_member" "tasks_agent_can_act_as_worker_sa" 
   member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com" // The Cloud Tasks Service Agent
 }
 
-// data "google_iam_policy" "tasks_invoker_policy" {
-//   provider = google
-//   binding {
-//     role = "roles/run.invoker"
-//     members = [
-//       "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com",
-//     ]
-//   }
-// }
+data "google_iam_policy" "tasks_invoker_policy" {
+  provider = google
+  binding {
+    role = "roles/run.invoker"
+    members = [
+      "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com",
+    ]
+  }
+}
 
-// resource "google_cloud_run_service_iam_policy" "tasks_invokes_python_worker" {
-//   provider    = google
-//   project     = google_cloud_run_service.python_worker.project
-//   location    = google_cloud_run_service.python_worker.location
-//   service     = google_cloud_run_service.python_worker.name
-//   policy_data = data.google_iam_policy.tasks_invoker_policy.policy_data
-//
-//   depends_on = [google_cloud_run_service.python_worker] 
-// }
+resource "google_cloud_run_service_iam_policy" "tasks_invokes_python_worker" {
+  provider    = google
+  project     = google_cloud_run_service.python_worker.project
+  location    = google_cloud_run_service.python_worker.location
+  service     = google_cloud_run_service.python_worker.name
+  policy_data = data.google_iam_policy.tasks_invoker_policy.policy_data
+
+  depends_on = [google_cloud_run_service.python_worker] 
+}
 
 output "cloud_tasks_queue_name" {
   value = google_cloud_tasks_queue.default.name
