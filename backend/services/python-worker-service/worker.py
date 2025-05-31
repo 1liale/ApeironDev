@@ -5,7 +5,7 @@ import logging
 import uvicorn
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from google.cloud import datastore
 from models import CloudTaskPayload
 
@@ -78,7 +78,11 @@ def execute_python_code(job_id: str, code: str, input_data: str) -> tuple[str | 
         return None, f"Internal worker error during execution: {str(e)}", 3
 
 @app.post("/execute")
-async def execute_task_endpoint(payload: CloudTaskPayload):
+async def execute_task_endpoint(payload: CloudTaskPayload, request: Request):
+    # Log the Authorization header
+    auth_header = request.headers.get('Authorization')
+    logger.info(f"Received Authorization header: {auth_header}")
+
     job_id = payload.job_id
     logger.info(f"Processing job_id: {job_id}, lang: {payload.language}")
 
