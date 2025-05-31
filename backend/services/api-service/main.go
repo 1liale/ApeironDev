@@ -205,12 +205,12 @@ func main() {
 						Url:        fmt.Sprintf("%s/execute", pythonWorkerURL),
 						Headers:    map[string]string{"Content-Type": "application/json"},
 						Body:       payloadBytes,
-						AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
-							OidcToken: &cloudtaskspb.OidcToken{
-								ServiceAccountEmail: pythonWorkerSAEmail,
-								Audience:            pythonWorkerURL,
-							},
-						},
+						// AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{ // Temporarily remove Auth header for debugging
+						// 	OidcToken: &cloudtaskspb.OidcToken{
+						// 		ServiceAccountEmail: pythonWorkerSAEmail,
+						// 		Audience:            pythonWorkerURL,
+						// 	},
+						// },
 					},
 				},
 				DispatchDeadline: durationpb.New(10 * time.Minute),
