@@ -208,7 +208,6 @@ func main() {
 						AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
 							OidcToken: &cloudtaskspb.OidcToken{
 								ServiceAccountEmail: pythonWorkerSAEmail,
-								Audience:            pythonWorkerURL,
 							},
 						},
 					},
