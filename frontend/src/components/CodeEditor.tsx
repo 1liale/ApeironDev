@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { Button } from "@nextui-org/button";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { handleRunCode } from "../services/api";
+import { executeCode } from "../services/api";
 import { CodeData } from "../models/data";
 
 const CodeEditor = () => {
@@ -19,10 +19,10 @@ const CodeEditor = () => {
     try {
       const data: CodeData = {
         code: codeVal,
-        stdin: input,
-        isSubmit,
+        language: "python",
+        input: input,
       };
-      const res = await handleRunCode(data);
+      const res = await executeCode(data);
       setResult(res.result); // sets result of the execution
       if (res.status != 0) throw Error(res.result); // handles invalid executions
       if (isSubmit) toast.success("Submitted!"); // toasts successful submissions

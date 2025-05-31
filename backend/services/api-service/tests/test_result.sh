@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_URL="http://localhost:8080"
+BASE_URL="https://api-service-628716652336.us-east1.run.app/"
 
 # This script assumes a job has been submitted by test_execute.sh or similar means.
 # For a standalone test, you might need to submit a job first.
