@@ -65,6 +65,16 @@ resource "google_cloud_run_service" "python_worker" {
   ]
 }
 
+# Temporarily allow unauthenticated invocations for debugging OIDC token
+resource "google_cloud_run_service_iam_member" "python_worker_public_invoker_temp" {
+  provider = google
+  project  = google_cloud_run_service.python_worker.project
+  location = google_cloud_run_service.python_worker.location
+  service  = google_cloud_run_service.python_worker.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 # Allow unauthenticated invocations (e.g., for Cloud Tasks) - This will be replaced by a specific IAM for Cloud Tasks
 // resource "google_cloud_run_service_iam_member" "python_worker_invoker" {
 //   project  = google_cloud_run_service.python_worker.project
