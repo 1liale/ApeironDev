@@ -1,3 +1,146 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 210 90% 75%;
+    --primary-foreground: 210 25% 20%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 25% 93%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 0 0% 100%;
+    --accent-foreground: 220 30% 40%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 210 90% 60%;
+
+    --sidebar-primary-foreground: 210 30% 20%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5% 90%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 210 90% 60%;
+
+    --success: 140 60% 45%;
+    --success-foreground: 210 40% 98%;
+  }
+
+  .dark {
+    --background: 225 15% 18%;
+    --foreground: 210 40% 98%;
+
+    --card: 225 15% 18%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 225 15% 22%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 90%;
+    --primary-foreground: 225 15% 15%;
+
+    --secondary: 225 10% 25%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 225 10% 14%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 225 10% 22%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 225 10% 25%;
+    --input: 225 10% 22%;
+    --ring: 210 40% 70%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 225 12% 16%;
+
+    --sidebar-foreground: 240 4.8% 95.9%;
+
+    --sidebar-primary: 210 40% 70%;
+
+    --sidebar-primary-foreground: 0 0% 100%;
+
+    --sidebar-accent: 225 10% 22%;
+
+    --sidebar-accent-foreground: 225 10% 30%;
+
+    --sidebar-border: 225 10% 12%;
+
+    --sidebar-ring: 210 40% 70%;
+
+    --success: 145 65% 35%;
+    --success-foreground: 210 40% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  }
+  
+  .monaco-editor {
+    font-family: 'Fira Code', 'Monaco', 'Menlo', monospace !important;
+  }
+
+  /* Custom thin transparent scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.6);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.8);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
