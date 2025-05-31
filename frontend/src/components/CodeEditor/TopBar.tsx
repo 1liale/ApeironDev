@@ -1,15 +1,16 @@
 import { Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
+import { useCodeExecutionContext } from "@/contexts/CodeExecutionContext";
 
 interface TopBarProps {
-  onRun: () => void;
-  isRunning: boolean;
   isDark: boolean;
   onToggleTheme: () => void;
 }
 
-export const TopBar = ({ onRun, isRunning, isDark, onToggleTheme }: TopBarProps) => {
+export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
+  const { triggerExecution, isExecuting } = useCodeExecutionContext();
+
   return (
     <div className="h-14 bg-background border-b border-border flex items-center justify-between px-4 py-2">
       <div className="flex items-center space-x-4">
@@ -18,19 +19,19 @@ export const TopBar = ({ onRun, isRunning, isDark, onToggleTheme }: TopBarProps)
       
       <div className="flex items-center space-x-2">
         <Button
-          onClick={onRun}
-          disabled={isRunning}
+          onClick={triggerExecution}
+          disabled={isExecuting}
           size="sm"
           className="bg-success hover:bg-success/90 text-success-foreground"
         >
-          {isRunning ? (
+          {isExecuting ? (
             <>
               <Square className="w-4 h-4 mr-2" />
               Running...
             </>
           ) : (
             <>
-              <Play className="w-4 h-4 mr-2" />
+              <Play className="w-4 h-4" />
               Run
             </>
           )}

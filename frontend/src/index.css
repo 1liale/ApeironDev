@@ -120,4 +120,27 @@
   .monaco-editor {
     font-family: 'Fira Code', 'Monaco', 'Menlo', monospace !important;
   }
+
+  /* Custom thin transparent scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.6);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.8);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

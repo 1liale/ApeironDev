@@ -18,6 +18,12 @@ export const ChatPanel = () => {
       content: 'Hello! I\'m your AI coding assistant. How can I help you with your code today?',
       role: 'assistant',
       timestamp: new Date()
+    },
+    {
+      id: '2',
+      content: 'THIS FEATURE IS IN DEVELOPMENT! AVAILABLE SOON!',
+      role: 'assistant',
+      timestamp: new Date()
     }
   ]);
   const [input, setInput] = useState('');
