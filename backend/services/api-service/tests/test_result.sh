@@ -21,4 +21,4 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
 
 echo "Status Code: $HTTP_CODE"
-echo "Response Body: $RESPONSE_BODY"
+echo "Response Body: $RESPONSE"
