@@ -62,7 +62,7 @@ data "google_iam_policy" "tasks_invoker_policy" {
   binding {
     role = "roles/run.invoker"
     members = [
-      "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com",
+      "serviceAccount:${google_service_account.code_execution_worker_sa.email}",
     ]
   }
 }
