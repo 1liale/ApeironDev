@@ -11,6 +11,7 @@ import (
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"cloud.google.com/go/datastore"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -116,6 +117,13 @@ func main() {
 	}()
 
 	r := gin.New()
+
+	// Add CORS middleware
+	config := cors.DefaultConfig()
+	config.AllowAllOrigins = true // Allow all origins
+	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
+	r.Use(cors.New(config))
 
 	r.Use(func(c *gin.Context) {
 		start := time.Now()

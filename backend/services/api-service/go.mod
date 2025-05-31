@@ -6,6 +6,7 @@ toolchain go1.23.9
 
 require (
 	cloud.google.com/go/cloudtasks v1.13.3
+	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1

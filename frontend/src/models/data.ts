@@ -6,8 +6,8 @@ export interface CodeData {
   code: string;
 
   // The stdin args that can be passed alongside the code.
-  stdin: string;
+  input: string;
 
-  // A flag indicating whether the code should be submitted or simply executed.
-  isSubmit: boolean;
+  // The language of the code to be executed.
+  language: string;
 }
