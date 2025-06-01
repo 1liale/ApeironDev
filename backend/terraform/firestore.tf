@@ -27,6 +27,21 @@ resource "google_project_iam_member" "code_execution_worker_datastore_user" {
   member   = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
 }
 
+# Enable TTL policy on the 'expires_at' field for the 'Job' collection
+resource "google_firestore_field" "job_ttl_policy" {
+  project    = var.gcp_project_id
+  database   = google_firestore_database.default.name
+  collection = "Job"
+  field      = "expires_at"
+
+  ttl_config {
+    state = "ACTIVE"
+  }
+
+  # Ensure this depends on the database existing
+  depends_on = [google_firestore_database.default]
+}
+
 output "firestore_database_name" {
   value = google_firestore_database.default.name
 }
