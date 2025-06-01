@@ -10,7 +10,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
-	"cloud.google.com/go/datastore"
+	"cloud.google.com/go/firestore"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -28,21 +28,18 @@ type RequestBody struct {
 }
 
 // Job struct stores information about a code execution job.
-// Datastore tags are used for property names.
+// Firestore tags are used for property names.
 type Job struct {
-	// ID is not stored as a field in Datastore if it's the Key's ID/Name.
-	// We will use the jobID string as the Key Name.
-	Status              string     `datastore:"status"` // e.g., "queued", "processing", "completed", "failed"
-	Code                string     `datastore:"code,noindex"` // noindex for potentially large fields
-	Language            string     `datastore:"language"`
-	Input               string     `datastore:"input,noindex"`
-	SubmittedAt         time.Time  `datastore:"submitted_at"`
-	ProcessingStartedAt *time.Time `datastore:"processing_started_at,omitempty"`
-	CompletedAt         *time.Time `datastore:"completed_at,omitempty"`
-	Output              string     `datastore:"output,noindex"` // Stored by the worker
-	Error               string     `datastore:"error,noindex"`  // Stored by the worker if execution fails
-	// For retrieval, we'll add the ID back if needed.
-	JobID string `datastore:"-"` // Used to hold the key's name/ID when retrieved
+	Status              string     `firestore:"status"`
+	Code                string     `firestore:"code,omitempty"`
+	Language            string     `firestore:"language"`
+	Input               string     `firestore:"input,omitempty"`
+	SubmittedAt         time.Time  `firestore:"submitted_at"`
+	ProcessingStartedAt *time.Time `firestore:"processing_started_at,omitempty"`
+	CompletedAt         *time.Time `firestore:"completed_at,omitempty"`
+	Output              string     `firestore:"output,omitempty"`
+	Error               string     `firestore:"error,omitempty"`
+	JobID               string     `firestore:"-"` // Not stored in Firestore doc, it's the doc ID
 }
 
 // CloudTaskPayload is the structure of the JSON payload sent to the Cloud Task
@@ -54,7 +51,7 @@ type CloudTaskPayload struct {
 }
 
 var (
-	datastoreClient         *datastore.Client
+	firestoreClient         *firestore.Client
 	tasksClient             *cloudtasks.Client
 	gcpProjectID            string
 	gcpRegion               string // Added for Cloud Tasks queue path
@@ -62,8 +59,8 @@ var (
 	cloudTasksQueuePath     string
 
 	pythonWorkerURL         string
-	pythonWorkerSAEmail   string
-	datastoreKindJobs     = "Job" // Datastore "Kind" for jobs
+	workerSAEmail   string
+	firestoreJobsCollections     = "Job" // This will now be the Firestore Collection ID
 )
 
 func init() {
@@ -83,20 +80,20 @@ func init() {
 	gcpRegion = os.Getenv("GCP_REGION")
 	cloudTasksQueueID = os.Getenv("CLOUD_TASKS_QUEUE_ID")
 	pythonWorkerURL = os.Getenv("PYTHON_WORKER_SERVICE_URL")
-	pythonWorkerSAEmail = os.Getenv("PYTHON_WORKER_SA_EMAIL")
+	workerSAEmail = os.Getenv("CODE_EXECUTION_WORKER_SA_EMAIL")
 
-	if gcpProjectID == "" || gcpRegion == "" || cloudTasksQueueID == "" || pythonWorkerURL == "" || pythonWorkerSAEmail == "" {
-		log.Fatal("Missing one or more critical environment variables: GCP_PROJECT_ID, GCP_REGION, CLOUD_TASKS_QUEUE_ID, PYTHON_WORKER_SERVICE_URL, PYTHON_WORKER_SA_EMAIL")
+	if gcpProjectID == "" || gcpRegion == "" || cloudTasksQueueID == "" || pythonWorkerURL == "" || workerSAEmail == "" {
+		log.Fatal("Missing one or more critical environment variables: GCP_PROJECT_ID, GCP_REGION, CLOUD_TASKS_QUEUE_ID, PYTHON_WORKER_SERVICE_URL, CODE_EXECUTION_WORKER_SA_EMAIL")
 	}
 
 	cloudTasksQueuePath = fmt.Sprintf("projects/%s/locations/%s/queues/%s", gcpProjectID, gcpRegion, cloudTasksQueueID)
 
 	ctx := context.Background()
-	dsClient, err := datastore.NewClient(ctx, gcpProjectID)
+	fsClient, err := firestore.NewClient(ctx, gcpProjectID)
 	if err != nil {
-		log.Fatalf("Failed to create Datastore client: %v", err)
+		log.Fatalf("Failed to create Firestore client: %v", err)
 	}
-	datastoreClient = dsClient
+	firestoreClient = fsClient
 
 	tClient, err := cloudtasks.NewClient(ctx)
 	if err != nil {
@@ -104,7 +101,7 @@ func init() {
 	}
 	tasksClient = tClient
 
-	log.Info("API Service initialized with Datastore client.")
+	log.Info("API Service initialized with Firestore client.")
 }
 
 func main() {
@@ -112,6 +109,11 @@ func main() {
 		if tasksClient != nil {
 			if err := tasksClient.Close(); err != nil {
 				log.Errorf("Failed to close CloudTasks client: %v", err)
+			}
+		}
+		if firestoreClient != nil {
+			if err := firestoreClient.Close(); err != nil {
+				log.Errorf("Failed to close Firestore client: %v", err)
 			}
 		}
 	}()
@@ -159,10 +161,6 @@ func main() {
 		}
 	})
 
-	r.GET("/healthcheck", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
-	})
-
 	r.POST("/execute", func(c *gin.Context) {
 		var reqBody RequestBody
 		if err := c.ShouldBindJSON(&reqBody); err != nil {
@@ -182,14 +180,14 @@ func main() {
 			SubmittedAt: time.Now().UTC(),
 		}
 
-		key := datastore.NameKey(datastoreKindJobs, jobID, nil)
+		docRef := firestoreClient.Collection(firestoreJobsCollections).Doc(jobID)
 
-		if _, err := datastoreClient.Put(ctx, key, &job); err != nil {
-			log.WithError(err).WithField("job_id", jobID).Error("Failed to create job in Datastore")
+		if _, err := docRef.Set(ctx, job); err != nil {
+			log.WithError(err).WithField("job_id", jobID).Error("Failed to create job in Firestore")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
 			return
 		}
-		log.WithFields(log.Fields{"job_id": jobID, "language": job.Language}).Info("Job queued in Datastore")
+		log.WithFields(log.Fields{"job_id": jobID, "language": job.Language}).Info("Job queued in Firestore")
 
 		taskPayload := CloudTaskPayload{
 			JobID:    jobID,
@@ -215,7 +213,7 @@ func main() {
 						Body:       payloadBytes,
 						AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
 							OidcToken: &cloudtaskspb.OidcToken{
-								ServiceAccountEmail: pythonWorkerSAEmail,
+								ServiceAccountEmail: workerSAEmail,
 							},
 						},
 					},
@@ -234,28 +232,6 @@ func main() {
 
 		log.WithFields(log.Fields{"job_id": jobID, "task_name": createdTask.GetName()}).Info("Job enqueued to Cloud Tasks")
 		c.JSON(http.StatusOK, gin.H{"job_id": jobID})
-	})
-
-	r.GET("/result/:job_id", func(c *gin.Context) {
-		jobIDparam := c.Param("job_id")
-		ctx := c.Request.Context()
-
-		key := datastore.NameKey(datastoreKindJobs, jobIDparam, nil)
-		var job Job
-		if err := datastoreClient.Get(ctx, key, &job); err != nil {
-			if err == datastore.ErrNoSuchEntity {
-				log.WithField("job_id", jobIDparam).Info("Job not found in Datastore")
-				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-				return
-			}
-			log.WithError(err).WithField("job_id", jobIDparam).Error("Failed to retrieve job from Datastore")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve job status"})
-			return
-		}
-		job.JobID = jobIDparam
-
-		log.WithFields(log.Fields{"job_id": jobIDparam, "status": job.Status}).Info("Job result retrieved from Datastore")
-		c.JSON(http.StatusOK, job)
 	})
 
 	port := os.Getenv("PORT")

@@ -3,6 +3,11 @@ locals {
   api_service_name = "api-service"
 }
 
+variable "python_worker_target_url" {
+  description = "The target URL of the Python Worker Service. This should be the stable Cloud Run URL."
+  type        = string
+}
+
 resource "google_cloud_run_service" "api_service" {
   provider = google
   project  = var.gcp_project_id
@@ -33,14 +38,14 @@ resource "google_cloud_run_service" "api_service" {
         }
         env {
           name  = "CLOUD_TASKS_QUEUE_ID"
-          value = google_cloud_tasks_queue.default.name
+          value = google_cloud_tasks_queue.python_execution_queue.name
         }
         env {
           name  = "PYTHON_WORKER_SERVICE_URL"
-          value = google_cloud_run_service.python_worker.status[0].url
+          value = var.python_worker_target_url
         }
         env {
-          name  = "PYTHON_WORKER_SA_EMAIL"
+          name  = "CODE_EXECUTION_WORKER_SA_EMAIL"
           value = google_service_account.code_execution_worker_sa.email
         }
         env {
@@ -58,10 +63,9 @@ resource "google_cloud_run_service" "api_service" {
 
   depends_on = [
     google_project_iam_member.api_service_datastore_user,
-    google_cloud_tasks_queue_iam_member.api_service_enqueuer,
+    google_project_iam_member.api_service_project_tasks_enqueuer,
     google_artifact_registry_repository.default,
     google_service_account.api_service_sa,
-    google_cloud_run_service.python_worker,
     google_service_account.code_execution_worker_sa
   ]
 }
@@ -83,11 +87,10 @@ resource "google_project_iam_member" "api_service_sa_token_creator" {
   member   = "serviceAccount:${google_service_account.api_service_sa.email}"
 }
 
-# Allow api-service-sa to act as (impersonate) python-worker-sa
-# This is required for creating tasks on a queue that uses python-worker-sa for OIDC.
+# This is required for creating tasks on a queue that uses code_execution_worker_sa for OIDC.
 resource "google_service_account_iam_member" "api_service_can_act_as_python_worker_sa" {
   provider           = google
-  service_account_id = google_service_account.code_execution_worker_sa.name # The SA to grant permissions ON (code-exec-worker-sa)
+  service_account_id = google_service_account.code_execution_worker_sa.name 
   role               = "roles/iam.serviceAccountUser"                 # Grants iam.serviceAccounts.actAs
-  member             = "serviceAccount:${google_service_account.api_service_sa.email}" # The SA being granted permission
+  member             = "serviceAccount:${google_service_account.api_service_sa.email}"
 } 

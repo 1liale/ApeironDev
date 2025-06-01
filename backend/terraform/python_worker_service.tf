@@ -38,8 +38,8 @@ resource "google_cloud_run_service" "python_worker" {
           value = var.gcp_project_id
         }
         env {
-          name  = "FIRESTORE_COLLECTION_JOBS"
-          value = "jobs"
+          name  = "COLLECTION_ID_JOBS"
+          value = "Job"
         }
         env {
           name = "DEFAULT_EXECUTION_TIMEOUT_SEC"
@@ -64,25 +64,6 @@ resource "google_cloud_run_service" "python_worker" {
     google_project_iam_member.code_execution_worker_datastore_user
   ]
 }
-
-# Temporarily allow unauthenticated invocations for debugging OIDC token - REVERTED
-# resource "google_cloud_run_service_iam_member" "python_worker_public_invoker_temp" {
-#   provider = google
-#   project  = google_cloud_run_service.python_worker.project
-#   location = google_cloud_run_service.python_worker.location
-#   service  = google_cloud_run_service.python_worker.name
-#   role     = "roles/run.invoker"
-#   member   = "allUsers"
-# }
-
-# Allow unauthenticated invocations (e.g., for Cloud Tasks) - This will be replaced by a specific IAM for Cloud Tasks
-// resource "google_cloud_run_service_iam_member" "python_worker_invoker" {
-//   project  = google_cloud_run_service.python_worker.project
-//   location = google_cloud_run_service.python_worker.location
-//   service  = google_cloud_run_service.python_worker.name
-//   role     = "roles/run.invoker"
-//   member   = "allUsers"
-// }
 
 # Output the URL of the python-worker-service
 output "python_worker_service_url" {
