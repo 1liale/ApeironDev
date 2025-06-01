@@ -77,13 +77,28 @@ func init() {
 	log.SetLevel(logLevel)
 
 	gcpProjectID = os.Getenv("GCP_PROJECT_ID")
-	gcpRegion = os.Getenv("GCP_REGION")
-	cloudTasksQueueID = os.Getenv("CLOUD_TASKS_QUEUE_ID")
-	pythonWorkerURL = os.Getenv("PYTHON_WORKER_SERVICE_URL")
-	workerSAEmail = os.Getenv("CODE_EXECUTION_WORKER_SA_EMAIL")
+	if gcpProjectID == "" {
+		log.Fatal("Missing critical environment variable: GCP_PROJECT_ID")
+	}
 
-	if gcpProjectID == "" || gcpRegion == "" || cloudTasksQueueID == "" || pythonWorkerURL == "" || workerSAEmail == "" {
-		log.Fatal("Missing one or more critical environment variables: GCP_PROJECT_ID, GCP_REGION, CLOUD_TASKS_QUEUE_ID, PYTHON_WORKER_SERVICE_URL, CODE_EXECUTION_WORKER_SA_EMAIL")
+	gcpRegion = os.Getenv("GCP_REGION")
+	if gcpRegion == "" {
+		log.Fatal("Missing critical environment variable: GCP_REGION")
+	}
+
+	cloudTasksQueueID = os.Getenv("CLOUD_TASKS_QUEUE_ID")
+	if cloudTasksQueueID == "" {
+		log.Fatal("Missing critical environment variable: CLOUD_TASKS_QUEUE_ID")
+	}
+
+	pythonWorkerURL = os.Getenv("PYTHON_WORKER_SERVICE_URL")
+	if pythonWorkerURL == "" {
+		log.Fatal("Missing critical environment variable: PYTHON_WORKER_SERVICE_URL")
+	}
+
+	workerSAEmail = os.Getenv("CODE_EXECUTION_WORKER_SA_EMAIL")
+	if workerSAEmail == "" {
+		log.Fatal("Missing critical environment variable: CODE_EXECUTION_WORKER_SA_EMAIL")
 	}
 
 	cloudTasksQueuePath = fmt.Sprintf("projects/%s/locations/%s/queues/%s", gcpProjectID, gcpRegion, cloudTasksQueueID)
