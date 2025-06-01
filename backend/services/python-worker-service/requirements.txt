@@ -4,4 +4,4 @@ uvicorn[standard]
 pytest
 numpy
 scipy
-google-cloud-datastore
+google-cloud-firestore
