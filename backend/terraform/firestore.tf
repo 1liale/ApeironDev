@@ -4,7 +4,7 @@ resource "google_firestore_database" "default" {
   project                  = var.gcp_project_id
   name                     = "(default)"
   location_id              = var.gcp_region # Firestore location, e.g., us-east1. Cannot be changed after creation.
-  type                     = "NATIVE"
+  type                     = "FIRESTORE_NATIVE"
   delete_protection_state  = "DELETE_PROTECTION_DISABLED"
 }
 
