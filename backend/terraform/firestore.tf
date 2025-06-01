@@ -1,12 +1,11 @@
-# Google Firestore database in Datastore mode
+# Google Firestore database in Native mode
 resource "google_firestore_database" "default" {
   provider                 = google
   project                  = var.gcp_project_id
   name                     = "(default)"
-  location_id              = var.gcp_region # Firestore location, e.g., us-east1
-  type                     = "DATASTORE_MODE"
+  location_id              = var.gcp_region # Firestore location, e.g., us-east1. Cannot be changed after creation.
+  type                     = "NATIVE"
   delete_protection_state  = "DELETE_PROTECTION_DISABLED"
-  app_engine_integration_mode = "DISABLED"
 }
 
 # It's also good practice to grant the necessary IAM roles to your service accounts

@@ -1,8 +1,8 @@
-# Google Cloud Tasks Queue
-resource "google_cloud_tasks_queue" "default" {
+# Python Execution Queue
+resource "google_cloud_tasks_queue" "python_execution_queue" {
   provider = google
   project  = var.gcp_project_id
-  name     = "code-execution-queue"
+  name     = "python-execution-queue"
   location = var.gcp_region
 
   rate_limits {
@@ -23,7 +23,7 @@ resource "google_cloud_tasks_queue" "default" {
   }
 }
 
-# Dedicated Service Account for api-service to enqueue tasks
+# Dedicated Service Account for api-service
 resource "google_service_account" "api_service_sa" {
   provider     = google
   project      = var.gcp_project_id
@@ -31,12 +31,10 @@ resource "google_service_account" "api_service_sa" {
   display_name = "API Service Account"
 }
 
-# Allow the api-service SA to enqueue tasks to the queue
-resource "google_cloud_tasks_queue_iam_member" "api_service_enqueuer" {
+# Allow the api-service SA to enqueue tasks to any queue in the project
+resource "google_project_iam_member" "api_service_project_tasks_enqueuer" {
   provider = google
   project  = var.gcp_project_id
-  location = google_cloud_tasks_queue.default.location
-  name     = google_cloud_tasks_queue.default.name
   role     = "roles/cloudtasks.enqueuer"
   member   = "serviceAccount:${google_service_account.api_service_sa.email}"
 }
@@ -77,8 +75,9 @@ resource "google_cloud_run_service_iam_policy" "tasks_invokes_python_worker" {
   depends_on = [google_cloud_run_service.python_worker] 
 }
 
-output "cloud_tasks_queue_name" {
-  value = google_cloud_tasks_queue.default.name
+output "python_execution_queue_name" {
+  description = "Name of the dedicated Python execution Cloud Tasks queue"
+  value       = google_cloud_tasks_queue.python_execution_queue.name
 }
 
 output "api_service_sa_email" {

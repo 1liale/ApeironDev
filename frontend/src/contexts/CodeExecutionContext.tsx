@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState, useRef, useCallback, ReactNode, useEffect } from 'react';
-import { executeCode, getJobResult, JobResult, ExecuteRequestBody } from '@/lib/api';
+import { executeCode, ExecuteRequestBody } from '@/lib/api'; // getJobResult removed
+import { firestoreDB } from '../firebase'; // Firebase integration
+import { doc, onSnapshot, Unsubscribe } from 'firebase/firestore'; // Firestore functions
 // import type { editor as MonacoEditor } from 'monaco-editor'; // Assuming this is still problematic
 
-const POLLING_INTERVAL_MS = 2000;
-const POLLING_TIMEOUT_MS = 10000;
+const JOBS_COLLECTION_ID = import.meta.env.VITE_FIRESTORE_JOBS_COLLECTION || 'Job';
 
 // Custom debounce function
 // Accepts a function F that takes specific arguments (T) and returns Promise<void> or void (R).
@@ -28,12 +29,12 @@ const customDebounce = <T extends unknown[], R extends void | Promise<void>>(
   return debounced;
 };
 
-// Interface for the structure we expect from the backend for job results
-interface BackendJobResult {
+// Interface for the structure we expect from Firestore for job documents (PascalCase)
+interface FirestoreJobDocument {
   Status: "queued" | "processing" | "completed" | "failed";
   Output?: string;
   Error?: string;
-  // Add any other fields from the backend response that are PascalCased and used
+  // Add any other fields from the Firestore document that are PascalCased and used
 }
 
 export interface CodeExecutionContextType {
@@ -75,74 +76,101 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeFileForExecution, setActiveFileForExecution] = useState<string>('main.py');
   
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pollingStartTimeRef = useRef<number | null>(null); // To track polling start time
+  const firestoreListenerUnsubscribeRef = useRef<Unsubscribe | null>(null); // For Firestore listener
 
-  const clearPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-    pollingStartTimeRef.current = null; // Reset start time
-  }, []);
+  // Simplified: only handles UI update after listener confirms completion/failure
+  const handleJobCompletionOrFailure = useCallback((finalMessage: string) => {
+    setIsExecuting(false);
+    setCurrentJobId(null);
+    setConsoleOutput(prev => [...prev, finalMessage]);
+    // Listener is unsubscribed by startJobListener itself
+  }, [setIsExecuting, setConsoleOutput]);
 
   const getLanguageForExecution = (filename: string): ExecuteRequestBody['language'] | null => {
     const ext = filename.split('.').pop()?.toLowerCase();
     if (ext === 'py') {
       return 'python';
     }
+    // Add other languages if needed, e.g.:
+    // if (ext === 'js') return 'javascript';
+    // if (ext === 'go') return 'go';
     return null; 
   };
 
-  const handleJobCompletionOrFailure = useCallback((outputMessage: string) => {
-    setIsExecuting(false);
-    clearPolling();
-    setCurrentJobId(null);
-    setConsoleOutput(prev => [...prev, outputMessage]);
-  }, [clearPolling, setIsExecuting, setConsoleOutput]);
+  const startJobListener = useCallback((jobId: string) => {
+    // Unsubscribe from any previous listener
+    if (firestoreListenerUnsubscribeRef.current) {
+      firestoreListenerUnsubscribeRef.current();
+      firestoreListenerUnsubscribeRef.current = null;
+    }
+    setCurrentJobId(jobId);
 
-  const pollForResults = useCallback((jobId: string) => {
-    clearPolling();
-    pollingStartTimeRef.current = Date.now(); // Set polling start time
-    setCurrentJobId(jobId); // Keep track of the job being polled
+    const jobDocRef = doc(firestoreDB, JOBS_COLLECTION_ID, jobId);
+    
+    const unsubscribe = onSnapshot(jobDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const jobData = docSnap.data() as FirestoreJobDocument;
+        const { Status, Output, Error } = jobData;
 
-    pollingIntervalRef.current = setInterval(async () => {
-      if (!pollingStartTimeRef.current) { // Should not happen if logic is correct
-        clearPolling();
-        return;
+        if (Status === 'completed') {
+          handleJobCompletionOrFailure(`Output:\n${Output || '(no output)'}`);
+          if (firestoreListenerUnsubscribeRef.current) { // defensive check
+            firestoreListenerUnsubscribeRef.current(); // Unsubscribe after completion
+            firestoreListenerUnsubscribeRef.current = null;
+          }
+        } else if (Status === 'failed') {
+          handleJobCompletionOrFailure(`Execution Failed: ${Error || 'Unknown error'}`);
+          if (firestoreListenerUnsubscribeRef.current) { // defensive check
+            firestoreListenerUnsubscribeRef.current(); // Unsubscribe after failure
+            firestoreListenerUnsubscribeRef.current = null;
+          }
+        } else if (Status === 'processing') {
+          // Optionally update console for processing status if not already done
+          // For example: setConsoleOutput(prev => [...prev, `Job ${jobId} is processing...`]);
+          // Be careful not to flood the console if this status updates frequently without other changes.
+        } else if (Status === 'queued'){
+          // Optionally update console for queued status
+        }
+
+      } else {
+        // Document doesn't exist (should not happen if job was created)
+        handleJobCompletionOrFailure(`Error: Job document ${jobId} not found.`);
+        if (firestoreListenerUnsubscribeRef.current) {
+            firestoreListenerUnsubscribeRef.current();
+            firestoreListenerUnsubscribeRef.current = null;
+        }
       }
-
-      if (Date.now() - pollingStartTimeRef.current > POLLING_TIMEOUT_MS) {
-        handleJobCompletionOrFailure(`Job ${jobId} timed out after ${POLLING_TIMEOUT_MS / 1000} seconds.`);
-        return;
+    }, (error) => {
+      // Error in listener itself
+      console.error("Error in Firestore listener:", error);
+      handleJobCompletionOrFailure(`Error listening to job updates: ${error.message}`);
+      if (firestoreListenerUnsubscribeRef.current) {
+          firestoreListenerUnsubscribeRef.current();
+          firestoreListenerUnsubscribeRef.current = null;
       }
-      
-      const result = await getJobResult(jobId);
+    });
 
-      // Type assertion to BackendJobResult
-      const backendResult = result as unknown as BackendJobResult; 
+    firestoreListenerUnsubscribeRef.current = unsubscribe; // Store the unsubscribe function
 
-      const jobStatus = backendResult.Status;
-      const jobError = backendResult.Error;
-      const jobOutput = backendResult.Output;
-
-      if (jobStatus === 'completed') {
-        handleJobCompletionOrFailure(`Output:\n${jobOutput || '(undefined)'}`);
-      } else if (jobStatus === 'failed') {
-        handleJobCompletionOrFailure(`Execution Failed: ${jobError || 'Unknown error'}`);
-      } else if (!jobStatus) {
-        handleJobCompletionOrFailure(`Error fetching result: ${(result as { error: string }).error}`);
-      }
-    }, POLLING_INTERVAL_MS);
-  }, [clearPolling, handleJobCompletionOrFailure]);
+  }, [firestoreDB, handleJobCompletionOrFailure]); // Ensure firestoreDB is stable or memoized if passed differently
 
 
-  const execute = useCallback(async (): Promise<void> => { // Ensure execute itself is typed to return Promise<void>
+  const execute = useCallback(async (): Promise<void> => {
     if (!editorRef.current) {
       setConsoleOutput(prev => [...prev, 'Error: Editor not available.']);
       return;
     }
-    if (isExecuting) return;
+    if (isExecuting) {
+        // If already executing, and there's a listener, ensure it is stopped before starting a new one.
+        // This might be relevant if user can click "Run" multiple times rapidly.
+        // The debounce helps, but this is an additional safeguard for the listener.
+        if (firestoreListenerUnsubscribeRef.current) {
+            firestoreListenerUnsubscribeRef.current();
+            firestoreListenerUnsubscribeRef.current = null;
+        }
+        // No need to return here explicitly if debounced, 
+        // but good to note that the old listener is cleared.
+    }
 
     const code = editorRef.current.getValue();
     if (!code.trim()) {
@@ -157,40 +185,48 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
     }
 
     setIsExecuting(true);
-    // Clear previous output related to execution, or keep history as desired
-    // For now, appending to existing consoleOutput
     setConsoleOutput(prev => [...prev, 'Executing code...']);
 
-    const response = await executeCode({
-      code,
-      language,
-      input: consoleInputValue,
-    });
+    try {
+      const response = await executeCode({
+        code,
+        language,
+        input: consoleInputValue,
+      });
 
-    if (response.error || !response.job_id) {
-      setConsoleOutput(prev => [...prev, `Error: ${response.error || 'Failed to start execution.'}`]);
-      setIsExecuting(false);
-      return;
+      if (response.error || !response.job_id) {
+        // Use handleJobCompletionOrFailure for consistency in stopping execution state
+        handleJobCompletionOrFailure(`Error: ${response.error || 'Failed to start execution.'}`);
+        return;
+      }
+
+      setConsoleOutput(prev => [...prev, `Job ID: ${response.job_id}`]);
+      startJobListener(response.job_id); // Start listening instead of polling
+
+    } catch (apiError) {
+      console.error("API call to executeCode failed:", apiError);
+      handleJobCompletionOrFailure(`Error starting execution: ${apiError instanceof Error ? apiError.message : String(apiError)}`);
     }
-
-    setConsoleOutput(prev => [...prev, `Job ID: ${response.job_id}`]);
-    pollForResults(response.job_id);
   }, [
     isExecuting, 
     consoleInputValue, 
     activeFileForExecution, 
-    pollForResults, // pollForResults itself depends on other items in this list via handleJobCompletionOrFailure
+    startJobListener, // New dependency
     setIsExecuting, 
-    setConsoleOutput
+    setConsoleOutput,
+    handleJobCompletionOrFailure // Added due to direct call in catch block
   ]);
 
   const debouncedExecute = customDebounce(execute, 1000);
   
+  // Effect for cleaning up the Firestore listener on unmount
   useEffect(() => {
     return () => {
-      clearPolling(); // Cleanup on unmount
+      if (firestoreListenerUnsubscribeRef.current) {
+        firestoreListenerUnsubscribeRef.current();
+      }
     };
-  }, [clearPolling]);
+  }, []); // Empty dependency array means this runs once on mount and cleanup on unmount
 
   const contextValue: CodeExecutionContextType = {
     editorRef,
