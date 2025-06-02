@@ -34,10 +34,6 @@ resource "google_firestore_field" "job_ttl_policy" {
   collection = "Job"
   field      = "expires_at"
 
-  ttl_config {
-    state = "ACTIVE"
-  }
-
   # Ensure this depends on the database existing
   depends_on = [google_firestore_database.default]
 }
