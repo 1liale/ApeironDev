@@ -2,7 +2,7 @@ import { Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
 import { useCodeExecutionContext } from "@/contexts/CodeExecutionContext";
-import { SignedIn, SignedOut, UserButton } from "@clerk/react-router";
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/react-router";
 import { Link } from "react-router-dom";
 
 interface TopBarProps {
@@ -16,18 +16,25 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
   return (
     <div className="h-14 bg-background border-b border-border flex items-center justify-between px-4 py-2">
       <div className="flex items-center space-x-4">
-        <Link to="/"><div className="text-foreground font-semibold">Code Editor</div></Link>
+        <Link to="/" className="flex items-center">
+          <img src="/logo.png" alt="Code Editor" width={45} height={45} />
+          <div className="text-foreground font-semibold text-xl ml-2">ApeironDev</div>
+        </Link>
       </div>
       
       <div className="flex items-center space-x-4">
         <div className="flex items-center space-x-2">
           <SignedOut>
-            <Button asChild variant="link" size="sm" className="text-foreground hover:text-foreground/80 no-underline hover:no-underline px-1">
-              <Link to="/sign-in">Sign In</Link>
-            </Button>
-            <Button asChild variant="link" size="sm" className="text-foreground hover:text-foreground/80 no-underline hover:no-underline px-1">
-              <Link to="/sign-up">Sign Up</Link>
-            </Button>
+            <SignInButton mode="modal">
+              <Button variant="link" size="sm" className="text-foreground hover:text-foreground/80 no-underline hover:no-underline px-1">
+                Sign In
+              </Button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <Button variant="link" size="sm" className="text-foreground hover:text-foreground/80 no-underline hover:no-underline px-1">
+                Sign Up
+              </Button>
+            </SignUpButton>
           </SignedOut>
           <SignedIn>
             <UserButton afterSignOutUrl="/" />
