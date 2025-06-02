@@ -112,7 +112,7 @@ def build_final_update_data(exec_status_code: int, output: str | None, error_det
 @app.post("/execute")
 async def execute_task_endpoint(payload: CloudTaskPayload, request: Request):
     job_id = payload.job_id
-    logger.info(f"Job {job_id}: Processing request. Lang: {payload.language}, Input: {len(payload.input or "")} chars.")
+    logger.info(f"Job {job_id}: Processing request. Lang: {payload.language}.")
 
     global firestore_client
     if not firestore_client:
