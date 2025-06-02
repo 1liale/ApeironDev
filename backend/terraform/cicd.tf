@@ -96,6 +96,13 @@ resource "google_project_iam_member" "cicd_firestore_user" {
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
+resource "google_project_iam_member" "cicd_firestore_index_admin" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/datastore.indexAdmin"
+  member   = "serviceAccount:${google_service_account.cicd_runner.email}"
+}
+
 variable "github_owner" {
   description = "The owner of the GitHub repository (username or organization)."
   type        = string
