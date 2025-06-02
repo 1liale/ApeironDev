@@ -20,7 +20,7 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
       </div>
       
       <div className="flex items-center space-x-4">
-        {/* <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2">
           <SignedOut>
             <Button asChild variant="link" size="sm" className="text-foreground hover:text-foreground/80 no-underline hover:no-underline px-1">
               <Link to="/sign-in">Sign In</Link>
@@ -30,9 +30,9 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
             </Button>
           </SignedOut>
           <SignedIn>
-            <UserButton afterSignOutUrl="/sign-in" />
+            <UserButton afterSignOutUrl="/" />
           </SignedIn>
-        </div> */}
+        </div>
 
         <Button
           onClick={triggerExecution}

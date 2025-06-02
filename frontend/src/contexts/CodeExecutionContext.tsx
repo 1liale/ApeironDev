@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useCallback, ReactNode, useEffect } from 'react';
 import { executeCode, ExecuteRequestBody } from '@/lib/api'; // getJobResult removed
-import { firestoreDB } from '../firebase'; // Firebase integration
+import { firestoreDB } from '../lib/firebase'; // Firebase integration
 import { doc, onSnapshot } from 'firebase/firestore'; // Firestore functions
 // import type { editor as MonacoEditor } from 'monaco-editor'; // Assuming this is still problematic
 

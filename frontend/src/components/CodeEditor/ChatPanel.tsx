@@ -1,7 +1,6 @@
 import { Send, Brain, User } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-// import { ScrollArea } from "@/components/ui/scroll-area"; // Removed
 import { Textarea } from "@/components/ui/textarea";
 
 interface Message {
@@ -98,7 +97,7 @@ export const ChatPanel = () => {
                     : 'bg-muted text-muted-foreground'
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
                 <span className="text-xs text-muted-foreground opacity-70 mt-1 block">
                   {message.timestamp.toLocaleTimeString()}
                 </span>
@@ -134,9 +133,9 @@ export const ChatPanel = () => {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="Ask about your code..."
-            className="flex-1 bg-transparent border-0 text-foreground placeholder:text-muted-foreground resize-none min-h-[20px] max-h-32 focus-visible:ring-0 focus-visible:ring-offset-0 p-0 text-sm"
+            className="flex-1 bg-transparent border-0 text-foreground placeholder:text-muted-foreground min-h-[60px] max-h-60 focus-visible:ring-0 focus-visible:ring-offset-0 pr-1 text-sm self-center resize-none"
             disabled={isLoading}
-            rows={1}
+            rows={2}
           />
           <Button
             onClick={handleSend}
