@@ -1,23 +1,72 @@
-# RemotePythonIDE
+# RemoteCodeIDE 🐍
 
-Author: Alex Li
+[![Author: Alex Li](https://img.shields.io/badge/Author-Alex%20Li-blue.svg)](https://github.com/1liale) <!-- Replace with your actual GitHub username -->
 
-Website with a code execution environment (write Python 3 code in an editor and execute remotely)
+A web-based IDE that allows users to write, execute, and view results of code remotely. This project features a secure, containerized execution environment, real-time updates, user authentication, and a **robust, highly scalable microservices** backend built on Google Cloud Platform.
 
-![Executing code in a secure environment](image.png)
-(Figure 1: Executing code in a secure environment -> does not allow modification of filesystem)
+![Executing code in a secure environment](code_editor.png)
+*(Figure 1: The IDE in action, showcasing code editing, execution, and output.)*
 
-Program will execute remote Python3 code sent by the user in a trusted container environment created in Docker.
+## ✨ Core Features
 
-The container will already have the prerequisite Python packages like `pandas` and `scipy` installed.
+*   Interactive Code Editor: Leverages the Monaco Editor for a rich and responsive coding experience.
+*   Remote Python 3 Execution: Executes code securely in a sandboxed Google Cloud Run environment, providing a reliable and isolated workspace.
+*   User Authentication: Integrated with Clerk for seamless and secure sign-up, sign-in, and user session management.
+*   Real-time Job Updates: Utilizes Firestore real-time listeners to provide instant feedback on code execution status and results directly in the UI.
+*   Asynchronous Task Queuing: Employs Google Cloud Tasks to efficiently manage and process code execution jobs, ensuring smooth performance.
+*   Secure by Design:
+    *   The Python worker service operates with least-privilege non-root access in a designated temporary directory.
+    *   Leverages secure OIDC tokens for service-to-service communication within the Google Cloud ecosystem.
+    *   Firestore security rules are in place to protect data integrity and access.
+*   Infrastructure as Code: Google Cloud resources are provisioned and managed declaratively using Terraform.
+*   Scalable Cloud Architecture: Built with serverless components like Cloud Run and Cloud Tasks, designed for scalability.
 
-## How to run
+## 🛠️ Tech Stack
 
-> Created purely as a dev env, app will be served on localhost
+Frontend:
+*   React (with Vite) & TypeScript
+*   Tailwind CSS & Shadcn/ui
+*   Monaco Editor
+*   Clerk (Authentication)
+*   Firebase SDK (Firestore real-time)
+*   React Router
 
-server + db: `cd backend && docker compose up` \
-client: `cd frontend && npm run dev`
+Backend: (Microservices Architecture)
+*   Google Cloud Run Services
+    *   API Service (`api-service`): Go
+    *   Python Worker Service (`python-worker-service`): Python (FastAPI)
+*   Database: Google Cloud Firestore to handle Job and Filesystem metadata
+*   Storage
+*   Task Queue: Google Cloud Tasks
 
-server: `port 8000` \
-sqlite db: `/backend/server/code_results.db` \
-client: `port 5173`
+Cloud & DevOps:
+*   Google Cloud Platform (GCP): Cloud Run, Cloud Tasks, Cloud Firestore, Cloud Build CI / CD with Github Integration and Triggers, IAM, GCS, Metrics Explore, Logs Explorer
+*   Terraform (Infrastructure as Code)
+*   Docker
+
+## ⚙️ Project Architecture Flow
+
+1.  Code Entry (Frontend): User writes code in the browser.
+2.  API Request (Frontend → API Service): Code is sent to the Go-based `api-service`.
+3.  Job Creation & Queuing (API Service):
+    *   A job record is created in Firestore.
+    *   An execution task is enqueued to Google Cloud Tasks.
+4.  Task Execution (Cloud Tasks → Python Worker):
+    *   The Python `python-worker-service` (FastAPI) picks up the task.
+    *   Job status is updated to "processing" in Firestore.
+    *   Code runs in a sandboxed, resource-limited environment.
+    *   Results (output/errors) are saved to Firestore.
+5.  Real-time Results (Firestore → Frontend): The UI updates instantly with job status and output via Firestore listeners.
+6.  Authentication: Clerk manages user identity across the frontend and is verifiable by the backend.
+
+## 🛡️ Security Highlights
+
+*   Sandboxed Execution: Code execution is isolated within Docker containers on Cloud Run with strict resource limits.
+*   Firestore Rules: Database access is controlled via Firestore security rules, with client-side writes disabled and server-side operations managed by IAM-authenticated services.
+*   OIDC Authentication: Secure, token-based authentication is used for inter-service communication within GCP (e.g., Cloud Tasks invoking Cloud Run).
+
+
+
+
+
+

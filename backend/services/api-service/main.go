@@ -37,6 +37,7 @@ type Job struct {
 	SubmittedAt         time.Time  `firestore:"submitted_at"`
 	ProcessingStartedAt *time.Time `firestore:"processing_started_at,omitempty"`
 	CompletedAt         *time.Time `firestore:"completed_at,omitempty"`
+	ExpiresAt           *time.Time `firestore:"expires_at,omitempty"`
 	Output              string     `firestore:"output,omitempty"`
 	Error               string     `firestore:"error,omitempty"`
 	JobID               string     `firestore:"-"` // Not stored in Firestore doc, it's the doc ID
