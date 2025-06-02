@@ -78,10 +78,9 @@ export const EditorPanel = ({
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
-      <div className="h-10 bg-background border-b border-border flex items-center justify-between px-4 flex-shrink-0">
+      {/* <div className="h-10 bg-background border-b border-border flex items-center justify-between px-4 flex-shrink-0">
         <span className="text-sm text-foreground">{activeFile || "Untitled"}</span>
-        {/* Run button is now expected to be in TopBar and use context.triggerExecution */}
-      </div>
+      </div> */}
       
       <div className="flex-1 overflow-hidden">
         <Editor
