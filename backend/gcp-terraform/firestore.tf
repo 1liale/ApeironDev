@@ -34,10 +34,12 @@ resource "google_firestore_field" "job_ttl_policy" {
   collection = "Job"
   field      = "expires_at"
 
+  # The ttl_config block enables the TTL policy for this field
+  ttl_config {}
+
   # Ensure this depends on the database existing
   depends_on = [google_firestore_database.default]
 }
-
 output "firestore_database_name" {
   value = google_firestore_database.default.name
 }

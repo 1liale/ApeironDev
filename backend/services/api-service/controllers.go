@@ -393,9 +393,16 @@ func (ac *ApiController) ExecuteCode(c *gin.Context) {
 	jobID := uuid.New().String()
 	ctx := c.Request.Context()
 
+	submittedAt := time.Now().UTC()
+	expiresAt := submittedAt.Add(15 * 24 * time.Hour) // Calculate 15 days expiry
+
 	job := Job{
-		Status: "queued", Code: reqBody.Code, Language: reqBody.Language,
-		Input: reqBody.Input, SubmittedAt: time.Now().UTC(),
+		Status:      "queued",
+		Code:        reqBody.Code,
+		Language:    reqBody.Language,
+		Input:       reqBody.Input,
+		SubmittedAt: submittedAt,
+		ExpiresAt:   expiresAt, // Set ExpiresAt
 	}
 
 	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
@@ -503,15 +510,20 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	jobID := uuid.New().String()
 	ctx := c.Request.Context()
 
+	submittedAt := time.Now().UTC()
+	expiresAt := submittedAt.Add(15 * 24 * time.Hour) // Calculate 15 days expiry
+
 	// Job record in Firestore will not store the code directly for authenticated execution
 	job := Job{
-		Status:        "queued",
-		Language:      req.Language,
-		Input:         req.Input,
-		SubmittedAt:   time.Now().UTC(),
-		WorkspaceID:   workspaceID,    // Store workspace ID for reference
-		EntrypointFile: req.EntrypointFile, // Store entrypoint for reference
-		ExecutionType: "authenticated_r2", // Differentiate execution type
+		Status:         "queued",
+		Language:       req.Language,
+		Input:          req.Input,
+		SubmittedAt:    submittedAt,
+		ExpiresAt:      expiresAt, // Set ExpiresAt
+		UserID:         userID,
+		WorkspaceID:    workspaceID,
+		EntrypointFile: req.EntrypointFile,
+		ExecutionType:  "authenticated_r2",
 	}
 
 	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
