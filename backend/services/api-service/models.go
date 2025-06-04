@@ -63,16 +63,17 @@ type FileMetadata struct {
 // Job struct stores information about a code execution job.
 type Job struct {
 	Status         string    `json:"status" firestore:"status"`
-	Code           string    `json:"code,omitempty"`
+	Code           string    `json:"code,omitempty" firestore:"-"` // Omit from Firestore
 	Language       string    `json:"language" firestore:"language"`
-	Input          string    `json:"input,omitempty"`
+	Input          string    `json:"input,omitempty" firestore:"-"` // Omit from Firestore
 	Output         string    `json:"output,omitempty" firestore:"output,omitempty"`
 	Error          string    `json:"error,omitempty" firestore:"error,omitempty"`
-	SubmittedAt    time.Time `json:"submittedAt" firestore:"submittedAt"`
-	UserID         string    `json:"userID,omitempty" firestore:"userID,omitempty"`                 // User who submitted the job
-	WorkspaceID    string    `json:"workspaceID,omitempty" firestore:"workspaceID,omitempty"`       // For R2-based execution
-	EntrypointFile string    `json:"entrypointFile,omitempty" firestore:"entrypointFile,omitempty"` // For R2-based execution
-	ExecutionType  string    `json:"executionType,omitempty" firestore:"executionType,omitempty"` // e.g., "direct", "authenticated_r2"
+	SubmittedAt    time.Time `json:"submittedAt" firestore:"submitted_at"`
+	ExpiresAt      time.Time `json:"expiresAt,omitempty" firestore:"expires_at,omitempty"`       // TTL field
+	UserID         string    `json:"userID,omitempty" firestore:"user_id,omitempty"`
+	WorkspaceID    string    `json:"workspaceID,omitempty" firestore:"workspace_id,omitempty"`
+	EntrypointFile string    `json:"entrypointFile,omitempty" firestore:"entrypoint_file,omitempty"`
+	ExecutionType  string    `json:"executionType,omitempty" firestore:"execution_type,omitempty"`
 }
 
 // CloudTaskPayload is the structure of the JSON payload sent to the Cloud Task for code execution.

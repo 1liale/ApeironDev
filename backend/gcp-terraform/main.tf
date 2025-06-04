@@ -24,7 +24,7 @@ variable "gcp_region" {
 variable "firestore_jobs_collection" {
   description = "Name of the Firestore collection for jobs"
   type        = string
-  default     = "jobs" 
+  default     = "Job" 
 }
 
 variable "python_execution_timeout" {
