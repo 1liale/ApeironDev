@@ -40,11 +40,11 @@ resource "google_project_iam_member" "cicd_service_account_user" {
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
-# Allows the SA to access secrets
-resource "google_project_iam_member" "cicd_secret_accessor" {
+# Allows the SA to access secrets (changed to admin for managing secrets with Terraform)
+resource "google_project_iam_member" "cicd_secret_manager_admin" { # Renamed for clarity
   provider = google
   project  = var.gcp_project_id
-  role     = "roles/secretmanager.secretAccessor"
+  role     = "roles/secretmanager.admin" # Changed from secretAccessor to admin
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
