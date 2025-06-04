@@ -129,7 +129,7 @@ resource "google_cloudbuild_trigger" "terraform_apply" {
   provider    = google
   project     = var.gcp_project_id
   name        = "terraform-apply-trigger"
-  description = "Triggers Terraform apply on changes to backend/terraform/**"
+  description = "Triggers Terraform apply on changes to backend/gcp-terraform/**"
   location    = "global"
 
   github {
@@ -140,8 +140,8 @@ resource "google_cloudbuild_trigger" "terraform_apply" {
     }
   }
 
-  included_files = ["backend/terraform/**.tf", "backend/terraform/**.tfvars", "backend/terraform/cloudbuild-tf.yaml"]
-  filename = "backend/terraform/cloudbuild-tf.yaml"
+  included_files = ["backend/gcp-terraform/**.tf", "backend/gcp-terraform/**.tfvars", "backend/gcp-terraform/cloudbuild-tf.yaml"]
+  filename = "backend/gcp-terraform/cloudbuild-tf.yaml"
   substitutions = {
     _CICD_RUNNER_SA_EMAIL = google_service_account.cicd_runner.email
   }
@@ -204,4 +204,116 @@ resource "google_cloudbuild_trigger" "python_worker_build_deploy" {
     _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
     _GCP_REGION                = var.gcp_region
   }
+}
+
+# --- Google Secret Manager Secrets ---
+# These secrets will be created by Terraform. Their values need to be populated manually
+# or via a secure mechanism after creation.
+
+resource "google_secret_manager_secret" "r2_access_key_id" {
+  provider = google
+  project   = var.gcp_project_id
+  secret_id = "r2-access-key-id"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "r2_secret_access_key" {
+  provider = google
+  project   = var.gcp_project_id
+  secret_id = "r2-secret-access-key"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "r2_account_id" {
+  provider = google
+  project   = var.gcp_project_id
+  secret_id = "r2-account-id"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "r2_bucket_name" {
+  provider = google
+  project   = var.gcp_project_id
+  secret_id = "r2-bucket-name"
+
+  replication {
+    auto {}
+  }
+}
+
+# --- IAM Permissions for Service Accounts to Access Secrets (Verbose but necessary to provide granular access control) ---
+
+# Permissions for api-service-sa
+resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_access_key_id" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_access_key_id.project
+  secret_id = google_secret_manager_secret.r2_access_key_id.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api_service_sa.email}" # Defined in cloud_tasks.tf or api_service.tf
+}
+
+resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_secret_access_key" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_secret_access_key.project
+  secret_id = google_secret_manager_secret.r2_secret_access_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_account_id" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_account_id.project
+  secret_id = google_secret_manager_secret.r2_account_id.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_bucket_name" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_bucket_name.project
+  secret_id = google_secret_manager_secret.r2_bucket_name.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
+# Permissions for code-exec-worker-sa
+resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_access_key_id" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_access_key_id.project
+  secret_id = google_secret_manager_secret.r2_access_key_id.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}" # Defined in cloud_tasks.tf or python_worker_service.tf
+}
+
+resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_secret_access_key" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_secret_access_key.project
+  secret_id = google_secret_manager_secret.r2_secret_access_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_account_id" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_account_id.project
+  secret_id = google_secret_manager_secret.r2_account_id.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_bucket_name" {
+  provider  = google
+  project   = google_secret_manager_secret.r2_bucket_name.project
+  secret_id = google_secret_manager_secret.r2_bucket_name.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
 } 

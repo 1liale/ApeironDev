@@ -26,7 +26,7 @@ export interface JobResult {
 
 export async function executeCode(body: ExecuteRequestBody): Promise<ExecuteResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/execute`, {
+    const response = await fetch(`${API_BASE_URL}/api/execute`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -48,27 +48,3 @@ export async function executeCode(body: ExecuteRequestBody): Promise<ExecuteResp
     return { job_id: '', error: 'An unknown error occurred during code execution.' };
   }
 }
-
-export async function getJobResult(jobId: string): Promise<JobResult | { error: string }> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/result/${jobId}`);
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ message: 'Failed to get job result and parse error' }));
-      console.error('Get Result API Error:', response.status, errorData);
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    const result = await response.json();
-    // The backend might return null for dates, ensure they are typed correctly or handled
-    return {
-      ...result,
-      processing_started_at: result.processing_started_at || null,
-      completed_at: result.completed_at || null,
-    };
-  } catch (error) {
-    console.error('Error in getJobResult:', error);
-    if (error instanceof Error) {
-      return { error: error.message };
-    }
-    return { error: 'An unknown error occurred while fetching the job result.' };
-  }
-} 

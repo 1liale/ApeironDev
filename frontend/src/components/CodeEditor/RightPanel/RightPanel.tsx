@@ -1,7 +1,7 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Terminal, Brain } from "lucide-react";
-import { ChatPanel } from "./ChatPanel";
-import { Textarea } from "../ui/textarea";
+import { ChatPanel } from "./ChatPanel"; 
+import { Textarea } from "@/components/ui/textarea"; 
 import { useCodeExecutionContext } from "@/contexts/CodeExecutionContext";
 
 export const RightPanel = () => {
@@ -74,4 +74,4 @@ export const RightPanel = () => {
       </Tabs>
     </div>
   );
-};
+}; 

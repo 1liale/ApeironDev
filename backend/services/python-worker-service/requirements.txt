@@ -5,3 +5,4 @@ pytest
 numpy
 scipy
 google-cloud-firestore
+boto3

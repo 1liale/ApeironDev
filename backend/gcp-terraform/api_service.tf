@@ -4,7 +4,7 @@ locals {
 }
 
 variable "python_worker_target_url" {
-  description = "The target URL of the Python Worker Service. This should be the stable Cloud Run URL."
+  description = "The target URL of the Python Worker Service. This should be the stable Cloud Run URL or the URL output by its own deployment."
   type        = string
 }
 
@@ -41,16 +41,56 @@ resource "google_cloud_run_service" "api_service" {
           value = google_cloud_tasks_queue.python_execution_queue.name
         }
         env {
-          name  = "PYTHON_WORKER_SERVICE_URL"
+          name  = "PYTHON_WORKER_URL"
           value = var.python_worker_target_url
         }
         env {
-          name  = "CODE_EXECUTION_WORKER_SA_EMAIL"
+          name  = "WORKER_SA_EMAIL"
           value = google_service_account.code_execution_worker_sa.email
         }
         env {
           name  = "LOG_LEVEL"
           value = "info"
+        }
+        env {
+          name = "R2_ACCESS_KEY_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_access_key_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_SECRET_ACCESS_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_secret_access_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_ACCOUNT_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_account_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_BUCKET_NAME"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_bucket_name.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name  = "FIRESTORE_JOBS_COLLECTION"
+          value = var.firestore_jobs_collection
         }
       }
     }

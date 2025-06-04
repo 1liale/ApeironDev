@@ -1,7 +1,5 @@
 import { Routes, Route } from "react-router-dom";
 import NotFound from "./pages/NotFound";
-import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { Toaster } from "@/components/ui/sonner";
 import { ClerkLoaded } from "@clerk/react-router";
 import HomePage from "./pages/HomePage";
 import { FirebaseAuthProvider } from "./contexts/FirebaseAuthProvider";
@@ -26,18 +24,15 @@ const App = () => {
   }, []);
 
   return (
-    <TooltipProvider>
-      <Toaster />
-      <ClerkLoaded>
-        <FirebaseAuthProvider>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-          {showOnboardingModal && <OnboardingModal isOpen={showOnboardingModal} onOpenChange={setShowOnboardingModal} />}
-        </FirebaseAuthProvider>
-      </ClerkLoaded>
-    </TooltipProvider>
+    <ClerkLoaded>
+      <FirebaseAuthProvider>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+        {showOnboardingModal && <OnboardingModal isOpen={showOnboardingModal} onOpenChange={setShowOnboardingModal} />}
+      </FirebaseAuthProvider>
+    </ClerkLoaded>
   );
 };
 

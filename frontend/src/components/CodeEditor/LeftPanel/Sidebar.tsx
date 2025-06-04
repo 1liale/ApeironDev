@@ -3,7 +3,7 @@ import {
   FilePlus,
   FolderPlus,
 } from "lucide-react";
-import { Button } from "../ui/button";
+import { Button } from "@/components/ui/button";
 import { DndProvider } from "react-dnd";
 import { 
   Tree, 
@@ -11,11 +11,12 @@ import {
   getBackendOptions, 
   NodeModel
 } from "@minoru/react-dnd-treeview";
-// import SampleData from "./sample_data.json"; // Removed import
-import { FileTreeNode } from "./FileTreeNode";
-import { CustomDragPreview } from "./CustomDragPreview";
+import { FileTreeNode } from "./FileTreeNode"; // Adjusted path
+import { CustomDragPreview } from "./CustomDragPreview"; // Adjusted path
 import { FileSystemNodeData, updateAllPaths, initializeTreeWithFileSystemNodeData } from "@/lib/filesystem";
 import { useAuth } from "@clerk/react-router";
+import { toast } from "@/components/ui/sonner"; 
+import { cn } from "@/lib/utils"; 
 
 interface SidebarProps {
   activeFile: string;
@@ -34,23 +35,19 @@ const initialDefaultFile: NodeModel[] = [
 
 export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const { isSignedIn } = useAuth();
-  // Initialize treeData with the default main.py file structure
   const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>(() => initializeTreeWithFileSystemNodeData(initialDefaultFile));
-  // Initialize selectedNodePath to the default file's path
   const [selectedNodePath, setSelectedNodePath] = useState<string | null>("/main.py"); 
   
   const handleDrop = (newTree: NodeModel<FileSystemNodeData>[], options: { dragSource?: NodeModel<FileSystemNodeData>; dropTargetId?: NodeModel['id'] }) => {
     const treeWithUpdatedPaths = updateAllPaths(newTree);
     setTreeData(treeWithUpdatedPaths);
 
-    // If the active file was moved, update its path in the parent component
     if (options.dragSource && activeFile && options.dragSource.data?.path === activeFile) {
       const draggedNodeAfterDrop = treeWithUpdatedPaths.find(n => n.id === options.dragSource!.id);
       if (draggedNodeAfterDrop && draggedNodeAfterDrop.data?.type === 'file' && draggedNodeAfterDrop.data.path !== activeFile) {
         onFileSelect(draggedNodeAfterDrop.data.path);
       }
     }
-    // If the selected node was dragged, update its selection path
     if (options.dragSource && selectedNodePath && options.dragSource.data?.path === selectedNodePath) {
       const draggedNodeAfterDrop = treeWithUpdatedPaths.find(n => n.id === options.dragSource!.id);
       if (draggedNodeAfterDrop && draggedNodeAfterDrop.data) {
@@ -59,7 +56,6 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
     }
   };
   
-  // Manage open state for folders
   const [openNodeIds, setOpenNodeIds] = useState<Array<NodeModel['id']>>([]);
   const handleNodeToggleInternal = (nodeId: NodeModel['id']) => {
     setOpenNodeIds(prevOpenIds => {
@@ -72,13 +68,12 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
 };
 
   const handleNodeClick = (node: NodeModel<FileSystemNodeData>) => {
-    setSelectedNodePath(node.data!.path); // Always set the visually selected node path
+    setSelectedNodePath(node.data!.path);
     if (node.data?.type === 'file') {
-      onFileSelect(node.data.path); // If it's a file, also tell the editor to open it
+      onFileSelect(node.data.path);
     }
   };
 
-  // Editing State and Handlers
   const [editingNodeId, setEditingNodeId] = useState<NodeModel['id'] | null>(null);
 
   const initiateEditMode = (nodeId: NodeModel['id']) => {
@@ -93,11 +88,9 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const handleRenameSubmit = (nodeId: NodeModel['id'], newName: string) => {
     if (!newName.trim()) {
       const node = treeData.find(n => n.id === nodeId);
-      // If it's a new node (identified by isEditing and empty text) being cancelled, delete it
       if (node && node.data?.isEditing && node.text === "") { 
         setTreeData(prevTreeData => prevTreeData.filter(n => n.id !== nodeId));
       } else {
-        // For existing nodes, or new nodes that had a temp name, just cancel edit if name is empty
         setTreeData(prevTreeData => prevTreeData.map(n => n.id === nodeId ? {...n, data: {...n.data!, isEditing: false}} : n));
       }
       setEditingNodeId(null);
@@ -115,26 +108,26 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
 
   const handleEditCancel = (nodeId: NodeModel['id']) => {
     const node = treeData.find(n => n.id === nodeId);
-    if (node && node.data?.isEditing && node.text === "") { // New node that was never named
+    if (node && node.data?.isEditing && node.text === "") { 
       setTreeData(prevTreeData => prevTreeData.filter(n => n.id !== nodeId));
-    } else { // Existing node, or new node that had a temp name (not handled here, renameSubmit would apply if name was given)
+    } else { 
       setTreeData(prevTreeData => prevTreeData.map(n => n.id === nodeId ? {...n, data: {...n.data!, isEditing: false}} : n));
     }
     setEditingNodeId(null);
   };
   
   const handleAddFileOrFolder = (type: 'file' | 'folder', parentId: NodeModel['id'] | null = null) => {
-    const newId = Date.now(); // Simple unique ID
+    const newId = Date.now(); 
     const targetParentId = parentId === null ? 0 : parentId;
 
     const newNode: NodeModel<FileSystemNodeData> = {
       id: newId,
       parent: targetParentId,
-      text: "", // Empty name, to be set by user input
+      text: "", 
       droppable: type === 'folder',
       data: {
         type: type,
-        path: "/", // Placeholder, will be updated by updateAllPaths after rename
+        path: "/", 
       isEditing: true,
       },
     };
@@ -165,17 +158,14 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
     };
     if (nodeToDelete.droppable) getDescendants(nodeId);
 
-    // Update active file if deleted or its parent folder is deleted
     const activeNode = treeData.find(n => n.data?.path === activeFile);
     if (activeNode && idsToRemove.includes(activeNode.id)) {
       onFileSelect("");
     }
 
-    // If selected node is deleted, clear selection
     if (selectedNodePath && nodeToDelete && nodeToDelete.data?.path === selectedNodePath) {
       setSelectedNodePath(null);
     } else {
-        // Check if selected node was a descendant
         const selectedNode = treeData.find(n => n.data?.path === selectedNodePath);
         if (selectedNode && idsToRemove.includes(selectedNode.id)) {
             setSelectedNodePath(null);
@@ -233,28 +223,42 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       <div className="p-2 border-t border-sidebar-border flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 flex-shrink-0">
           <div className="relative w-full group">
             <Button 
-              onClick={() => handleAddFileOrFolder('file')} 
-              className="flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md"
-            title={!isSignedIn ? "Sign in to add files" : "Add File"}
-            disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) {
+                  toast.warning("Please sign in to add a new file.");
+                } else {
+                  handleAddFileOrFolder('file');
+                }
+              }}
+              className={cn(
+                "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
+                !isSignedIn && "opacity-50 cursor-not-allowed"
+              )}
             >
-            <FilePlus className="w-4 h-4 sm:mr-2" /> 
-            <span className="hidden sm:inline">Add File</span>
-          </Button>
+              <FilePlus className="w-4 h-4 sm:mr-2" /> 
+              <span className="hidden sm:inline">Add File</span>
+            </Button>
           </div>
           <div className="relative w-full group">
             <Button 
-              onClick={() => handleAddFileOrFolder('folder')} 
-              className="flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md"
-            title={!isSignedIn ? "Sign in to add folders" : "Add Folder"}
-            disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) {
+                  toast.warning("Please sign in to add a new folder.");
+                } else {
+                  handleAddFileOrFolder('folder');
+                }
+              }} 
+              className={cn(
+                "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
+                !isSignedIn && "opacity-50 cursor-not-allowed"
+              )}
             >
-            <FolderPlus className="w-4 h-4 sm:mr-2" /> 
-            <span className="hidden sm:inline">Add Folder</span>
-          </Button>
-        </div>
+              <FolderPlus className="w-4 h-4 sm:mr-2" /> 
+              <span className="hidden sm:inline">Add Folder</span>
+            </Button>
+          </div>
       </div>
     </div>
   );
   
-};
+}; 

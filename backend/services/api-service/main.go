@@ -2,125 +2,111 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
+	// Firebase Admin SDK
+	firebase "firebase.google.com/go/v4"
+
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
-	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"cloud.google.com/go/firestore"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config" // Renamed to avoid conflict with package 'config'
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/joho/godotenv"
+
 	log "github.com/sirupsen/logrus"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// RequestBody struct for the /execute endpoint
-type RequestBody struct {
-	Code     string `json:"code" binding:"required"`
-	Language string `json:"language" binding:"required"`
-	Input    string `json:"input"` // Optional input field
-}
-
-// Job struct stores information about a code execution job.
-// Firestore tags are used for property names.
-type Job struct {
-	Status              string     `firestore:"status"`
-	Code                string     `firestore:"code,omitempty"`
-	Language            string     `firestore:"language"`
-	Input               string     `firestore:"input,omitempty"`
-	SubmittedAt         time.Time  `firestore:"submitted_at"`
-	ProcessingStartedAt *time.Time `firestore:"processing_started_at,omitempty"`
-	CompletedAt         *time.Time `firestore:"completed_at,omitempty"`
-	ExpiresAt           *time.Time `firestore:"expires_at,omitempty"`
-	Output              string     `firestore:"output,omitempty"`
-	Error               string     `firestore:"error,omitempty"`
-	JobID               string     `firestore:"-"` // Not stored in Firestore doc, it's the doc ID
-}
-
-// CloudTaskPayload is the structure of the JSON payload sent to the Cloud Task
-type CloudTaskPayload struct {
-	JobID    string `json:"job_id"`
-	Code     string `json:"code"`
-	Language string `json:"language"`
-	Input    string `json:"input"`
-}
-
+// Global variables for clients that are initialized once and used throughout.
 var (
-	firestoreClient         *firestore.Client
-	tasksClient             *cloudtasks.Client
-	gcpProjectID            string
-	gcpRegion               string // Added for Cloud Tasks queue path
-	cloudTasksQueueID       string
-	cloudTasksQueuePath     string
-
-	pythonWorkerURL         string
-	workerSAEmail   string
-	firestoreJobsCollections     = "Job" // This will now be the Firestore Collection ID
+	firestoreClient *firestore.Client
+	tasksClient     *cloudtasks.Client
+	r2PresignClient *s3.PresignClient
+	firebaseApp     *firebase.App // Added for Firebase Admin SDK
 )
 
-func init() {
-	if err := godotenv.Load(); err != nil {
-		log.Info("No .env file found, using environment variables")
+// initializeFirebase initializes the Firebase Admin SDK.
+func initializeFirebase(ctx context.Context, projectID string) error {
+	conf := &firebase.Config{ProjectID: projectID}
+	app, err := firebase.NewApp(ctx, conf)
+	if err != nil {
+		return fmt.Errorf("error initializing Firebase app: %v", err)
+	}
+	firebaseApp = app
+	log.Info("Firebase Admin SDK initialized successfully.")
+	return nil
+}
+
+// AuthMiddleware has been moved to middleware.go
+
+func main() {
+	cfg, err := LoadConfig() // Load configuration first
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Setup logger based on config
 	log.SetFormatter(&log.JSONFormatter{})
 	log.SetOutput(os.Stdout)
-	logLevel, err := log.ParseLevel(os.Getenv("LOG_LEVEL"))
-	if err != nil {
+	logLevel, parseErr := log.ParseLevel(cfg.LogLevel)
+	if parseErr != nil {
+		log.Warnf("Invalid log level '%s', defaulting to 'info'. Error: %v", cfg.LogLevel, parseErr)
 		logLevel = log.InfoLevel
 	}
 	log.SetLevel(logLevel)
 
-	gcpProjectID = os.Getenv("GCP_PROJECT_ID")
-	if gcpProjectID == "" {
-		log.Fatal("Missing critical environment variable: GCP_PROJECT_ID")
-	}
-
-	gcpRegion = os.Getenv("GCP_REGION")
-	if gcpRegion == "" {
-		log.Fatal("Missing critical environment variable: GCP_REGION")
-	}
-
-	cloudTasksQueueID = os.Getenv("CLOUD_TASKS_QUEUE_ID")
-	if cloudTasksQueueID == "" {
-		log.Fatal("Missing critical environment variable: CLOUD_TASKS_QUEUE_ID")
-	}
-
-	pythonWorkerURL = os.Getenv("PYTHON_WORKER_SERVICE_URL")
-	if pythonWorkerURL == "" {
-		log.Fatal("Missing critical environment variable: PYTHON_WORKER_SERVICE_URL")
-	}
-
-	workerSAEmail = os.Getenv("CODE_EXECUTION_WORKER_SA_EMAIL")
-	if workerSAEmail == "" {
-		log.Fatal("Missing critical environment variable: CODE_EXECUTION_WORKER_SA_EMAIL")
-	}
-
-	cloudTasksQueuePath = fmt.Sprintf("projects/%s/locations/%s/queues/%s", gcpProjectID, gcpRegion, cloudTasksQueueID)
-
 	ctx := context.Background()
-	fsClient, err := firestore.NewClient(ctx, gcpProjectID)
+
+	// Initialize Firebase Admin SDK
+	if err := initializeFirebase(ctx, cfg.GCPProjectID); err != nil {
+		log.Fatalf("Failed to initialize Firebase Admin SDK: %v", err)
+	}
+
+	// Initialize Firestore Client
+	fsClient, err := firestore.NewClient(ctx, cfg.GCPProjectID)
 	if err != nil {
 		log.Fatalf("Failed to create Firestore client: %v", err)
 	}
 	firestoreClient = fsClient
 
+	// Initialize CloudTasks Client
 	tClient, err := cloudtasks.NewClient(ctx)
 	if err != nil {
 		log.Fatalf("Failed to create Cloud Tasks client: %v", err)
 	}
 	tasksClient = tClient
+	log.Info("API Service initialized with Firestore and CloudTasks clients.")
 
-	log.Info("API Service initialized with Firestore client.")
-}
+	// Initialize R2/S3 Presign Client
+	r2AwsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.R2AccessKeyID, cfg.R2SecretAccessKey, "")),
+		awsconfig.WithRegion("auto"),
+	)
+	if err != nil {
+		log.Fatalf("Failed to load R2 S3 configuration: %v", err)
+	}
+	r2S3ClientFromConfig := s3.NewFromConfig(r2AwsCfg, func(o *s3.Options) {
+		o.EndpointResolver = s3.EndpointResolverFunc(
+			func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:               fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2AccountID),
+					HostnameImmutable: true,
+					SigningRegion:     "auto",
+					SigningName:       "s3",
+				}, nil
+			})
+		o.UsePathStyle = true
+	})
+	r2PresignClient = s3.NewPresignClient(r2S3ClientFromConfig)
+	log.Info("R2 S3 Presign client initialized.")
 
-func main() {
+	// Defer client closing
 	defer func() {
 		if tasksClient != nil {
 			if err := tasksClient.Close(); err != nil {
@@ -132,17 +118,19 @@ func main() {
 				log.Errorf("Failed to close Firestore client: %v", err)
 			}
 		}
+		// Note: firebaseApp does not have a Close() method like other clients.
 	}()
 
 	r := gin.New()
 
-	// Add CORS middleware
-	config := cors.DefaultConfig()
-	config.AllowAllOrigins = true // Allow all origins
-	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
-	r.Use(cors.New(config))
+	// CORS middleware remains the same
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowAllOrigins = true
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
+	r.Use(cors.New(corsConfig))
 
+	// Request Logging middleware remains the same
 	r.Use(func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
@@ -164,8 +152,8 @@ func main() {
 		if raw != "" {
 			logFields["query"] = raw
 		}
-		if c.Errors.ByType(gin.ErrorTypePrivate).String() != "" {
-			logFields["error"] = c.Errors.ByType(gin.ErrorTypePrivate).String()
+		if len(c.Errors) > 0 {
+			logFields["error"] = c.Errors.String()
 		}
 		entry := log.WithFields(logFields)
 		if statusCode >= 500 {
@@ -177,86 +165,35 @@ func main() {
 		}
 	})
 
-	r.POST("/execute", func(c *gin.Context) {
-		var reqBody RequestBody
-		if err := c.ShouldBindJSON(&reqBody); err != nil {
-			log.WithError(err).Warn("Invalid request body for /execute")
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+	apiController := NewApiController(
+		firestoreClient,
+		tasksClient,
+		r2PresignClient,
+		cfg.R2BucketName,
+		cfg.PythonWorkerURL,
+		cfg.WorkerSAEmail,
+		cfg.CloudTasksQueuePath,
+		cfg.FirestoreJobsCollection,
+	)
 
-		jobID := uuid.New().String()
-		ctx := c.Request.Context()
-
-		job := Job{
-			Status:      "queued",
-			Code:        reqBody.Code,
-			Language:    reqBody.Language,
-			Input:       reqBody.Input,
-			SubmittedAt: time.Now().UTC(),
-		}
-
-		docRef := firestoreClient.Collection(firestoreJobsCollections).Doc(jobID)
-
-		if _, err := docRef.Set(ctx, job); err != nil {
-			log.WithError(err).WithField("job_id", jobID).Error("Failed to create job in Firestore")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
-			return
-		}
-		log.WithFields(log.Fields{"job_id": jobID, "language": job.Language}).Info("Job queued in Firestore")
-
-		taskPayload := CloudTaskPayload{
-			JobID:    jobID,
-			Code:     reqBody.Code,
-			Language: reqBody.Language,
-			Input:    reqBody.Input,
-		}
-		payloadBytes, err := json.Marshal(taskPayload)
-		if err != nil {
-			log.WithError(err).WithField("job_id", jobID).Error("Failed to marshal task payload")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare job for execution"})
-			return
-		}
-
-		taskReq := &cloudtaskspb.CreateTaskRequest{
-			Parent: cloudTasksQueuePath,
-			Task: &cloudtaskspb.Task{
-				MessageType: &cloudtaskspb.Task_HttpRequest{
-					HttpRequest: &cloudtaskspb.HttpRequest{
-						HttpMethod: cloudtaskspb.HttpMethod_POST,
-						Url:        fmt.Sprintf("%s/execute", pythonWorkerURL),
-						Headers:    map[string]string{"Content-Type": "application/json"},
-						Body:       payloadBytes,
-						AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
-							OidcToken: &cloudtaskspb.OidcToken{
-								ServiceAccountEmail: workerSAEmail,
-							},
-						},
-					},
-				},
-				DispatchDeadline: durationpb.New(10 * time.Minute),
-				ScheduleTime:     timestamppb.New(time.Now().UTC().Add(1 * time.Second)),
-			},
-		}
-
-		createdTask, err := tasksClient.CreateTask(ctx, taskReq)
-		if err != nil {
-			log.WithError(err).WithField("job_id", jobID).Error("Failed to create Cloud Task")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit job for execution"})
-			return
-		}
-
-		log.WithFields(log.Fields{"job_id": jobID, "task_name": createdTask.GetName()}).Info("Job enqueued to Cloud Tasks")
-		c.JSON(http.StatusOK, gin.H{"job_id": jobID})
-	})
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	authenticatedRoutes := r.Group("/api")
+	authenticatedRoutes.Use(AuthMiddleware()) // Pass JWTSecret from cfg - Changed to no longer pass JWTSecret
+	{
+		// Corrected and consolidated routes for workspaces
+		authenticatedRoutes.GET("/workspaces/:workspaceId/files", apiController.ListFiles)
+		authenticatedRoutes.POST("/workspaces/:workspaceId/sync", apiController.HandleSync)
+		authenticatedRoutes.POST("/workspaces/:workspaceId/sync/confirm", apiController.ConfirmSync)
+		authenticatedRoutes.POST("/workspaces/:workspaceId/execute_code", apiController.ExecuteCodeAuthenticated)
 	}
 
-	log.Info("Starting API server on port ", port)
-	if err := r.Run(":" + port); err != nil {
+	// Setup public routes (no auth required)
+	publicRoutes := r.Group("/api")
+	{
+		publicRoutes.POST("/execute", apiController.ExecuteCode) // Public code execution
+	}
+
+	log.Info("Starting API server on port ", cfg.Port)
+	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-} 
+}
