@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api-service main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api-service .
 
 # Start a new, smaller stage from scratch
 FROM alpine:latest
@@ -19,8 +19,6 @@ WORKDIR /root/
 
 # Copy the Pre-built binary file from the previous stage
 COPY --from=builder /api-service .
-# COPY --from=builder /app/.env.example /root/.env.example
-# COPY --from=builder /app/config /root/config
 
 
 # Expose port 8080 (for running locally)

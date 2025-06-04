@@ -6,7 +6,7 @@ steps:
     args:
       - init
       - -input=false
-    dir: 'backend/terraform' # Specify the directory where terraform files are
+    dir: 'backend/gcp-terraform' # Specify the directory where terraform files are
 
   # === Stage: Terraform Plan ===
   - name: 'hashicorp/terraform:1.5.7'
@@ -16,7 +16,7 @@ steps:
       - plan
       - -input=false
       - -out=tfplan # Save the plan
-    dir: 'backend/terraform'
+    dir: 'backend/gcp-terraform'
     waitFor: ['Terraform Init']
 
   # === Stage: Terraform Apply ===
@@ -28,7 +28,7 @@ steps:
       - -input=false
       - -auto-approve
       - tfplan # Apply the saved plan
-    dir: 'backend/terraform'
+    dir: 'backend/gcp-terraform'
     waitFor: ['Terraform Plan']
 
 # Tell Cloud Build to use the custom CI/CD service account

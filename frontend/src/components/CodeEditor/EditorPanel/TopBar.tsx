@@ -1,6 +1,6 @@
 import { Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "./ThemeToggle";
+import { ThemeToggle } from "@/components/CodeEditor/RightPanel/ThemeToggle"; 
 import { useCodeExecutionContext } from "@/contexts/CodeExecutionContext";
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/react-router";
 import { Link } from "react-router-dom";
@@ -64,4 +64,4 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
       </div>
     </div>
   );
-};
+}; 

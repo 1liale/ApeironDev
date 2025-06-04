@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useState, useRef, useCallback, ReactNode, useEffect } from 'react';
-import { executeCode, ExecuteRequestBody } from '@/lib/api'; // getJobResult removed
-import { firestoreDB } from '../lib/firebase'; // Firebase integration
+import { executeCode, ExecuteRequestBody } from '@/lib/api';
+import { firestoreDB } from '@/lib/firebase'; // Firebase integration
 import { doc, onSnapshot } from 'firebase/firestore'; // Firestore functions
-// import type { editor as MonacoEditor } from 'monaco-editor'; // Assuming this is still problematic
 
 const JOBS_COLLECTION_ID = import.meta.env.VITE_FIRESTORE_JOBS_COLLECTION || 'Job';
 
@@ -157,7 +156,7 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
         return;
       }
 
-      setConsoleOutput(prev => [...prev, `Job ID: ${response.job_id}`]);
+      // setConsoleOutput(prev => [...prev, `Job ID: ${response.job_id}`]);
       setCurrentJobId(response.job_id); // This triggers the useEffect to start the new listener
 
     } catch (apiError) {

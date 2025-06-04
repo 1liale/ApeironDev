@@ -38,16 +38,52 @@ resource "google_cloud_run_service" "python_worker" {
           value = var.gcp_project_id
         }
         env {
-          name  = "COLLECTION_ID_JOBS"
-          value = "Job"
+          name  = "FIRESTORE_JOBS_COLLECTION"
+          value = var.firestore_jobs_collection
         }
         env {
-          name = "DEFAULT_EXECUTION_TIMEOUT_SEC"
-          value = "10"
+          name  = "PYTHON_EXECUTION_TIMEOUT"
+          value = var.python_execution_timeout
         }
         env {
-          name = "LOG_LEVEL"
+          name  = "LOG_LEVEL"
           value = "INFO"
+        }
+        env {
+          name = "R2_ACCESS_KEY_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_access_key_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_SECRET_ACCESS_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_secret_access_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_ACCOUNT_ID"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_account_id.secret_id
+              key  = "latest"
+            }
+          }
+        }
+        env {
+          name = "R2_BUCKET_NAME"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.r2_bucket_name.secret_id
+              key  = "latest"
+            }
+          }
         }
       }
     }

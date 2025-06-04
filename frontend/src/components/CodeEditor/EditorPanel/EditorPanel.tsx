@@ -108,4 +108,4 @@ export const EditorPanel = ({
       </div>
     </div>
   );
-};
+}; 
