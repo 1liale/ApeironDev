@@ -19,7 +19,7 @@ dist/
 .terraform/
 *.tfstate
 *.tfstate.*
-*.tfvars
+# *.tfvars (with the caveat that no sensitve env variables stored here!)
 crash.log
 *.tfplan
 .terraform.lock.hcl
