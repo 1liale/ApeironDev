@@ -1,11 +1,5 @@
 import { NodeModel } from "@minoru/react-dnd-treeview";
-
-// Define FileSystemNodeData for our tree nodes
-export interface FileSystemNodeData {
-  type: 'file' | 'folder';
-  path: string;       // Full path, e.g., /folder1/file.txt
-  isEditing?: boolean;
-}
+import type { FileSystemNodeData } from "@/types/filesystem";
 
 // Helper function to initialize tree data with FileSystemNodeData
 export const initializeTreeWithFileSystemNodeData = (nodes: NodeModel[], rootId: string | number = 0): NodeModel<FileSystemNodeData>[] => {

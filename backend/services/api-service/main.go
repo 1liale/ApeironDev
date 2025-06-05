@@ -83,7 +83,7 @@ func main() {
 	tasksClient = tClient
 	log.Info("API Service initialized with Firestore and CloudTasks clients.")
 
-	// Initialize R2/S3 Presign Client
+	// Initialize R2/S3 Client
 	r2AwsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.R2AccessKeyID, cfg.R2SecretAccessKey, "")),
 		awsconfig.WithRegion("auto"),
@@ -91,6 +91,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load R2 S3 configuration: %v", err)
 	}
+	// Use the old endpoint as V2 is not availble for go-sdk yet
 	r2S3ClientFromConfig := s3.NewFromConfig(r2AwsCfg, func(o *s3.Options) {
 		o.EndpointResolver = s3.EndpointResolverFunc(
 			func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
@@ -104,7 +105,7 @@ func main() {
 		o.UsePathStyle = true
 	})
 	r2PresignClient = s3.NewPresignClient(r2S3ClientFromConfig)
-	log.Info("R2 S3 Presign client initialized.")
+	log.Info("R2 S3 Client initialized.")
 
 	// Defer client closing
 	defer func() {
@@ -169,6 +170,7 @@ func main() {
 		firestoreClient,
 		tasksClient,
 		r2PresignClient,
+		r2S3ClientFromConfig,
 		cfg.R2BucketName,
 		cfg.PythonWorkerURL,
 		cfg.WorkerSAEmail,
@@ -177,13 +179,17 @@ func main() {
 	)
 
 	authenticatedRoutes := r.Group("/api")
-	authenticatedRoutes.Use(AuthMiddleware()) // Pass JWTSecret from cfg - Changed to no longer pass JWTSecret
+	authenticatedRoutes.Use(AuthMiddleware()) // No longer pass JWTSecret
 	{
-		// Corrected and consolidated routes for workspaces
-		authenticatedRoutes.GET("/workspaces/:workspaceId/files", apiController.ListFiles)
+		// Workspace and File Sync Endpoints
+		authenticatedRoutes.POST("/workspaces", apiController.CreateWorkspace)      // Changed from /workspaces/create
+		authenticatedRoutes.GET("/workspaces", apiController.ListWorkspaces)          // New route for listing workspaces
 		authenticatedRoutes.POST("/workspaces/:workspaceId/sync", apiController.HandleSync)
 		authenticatedRoutes.POST("/workspaces/:workspaceId/sync/confirm", apiController.ConfirmSync)
-		authenticatedRoutes.POST("/workspaces/:workspaceId/execute_code", apiController.ExecuteCodeAuthenticated)
+		authenticatedRoutes.GET("/workspaces/:workspaceId/manifest", apiController.GetWorkspaceManifest)
+
+		// Authenticated Code Execution
+		authenticatedRoutes.POST("/workspaces/:workspaceId/execute", apiController.ExecuteCodeAuthenticated)
 	}
 
 	// Setup public routes (no auth required)
