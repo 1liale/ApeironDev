@@ -14,6 +14,7 @@ import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CodeExecutionProvider } from "@/contexts/CodeExecutionContext";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 
 const HomePage = () => {
   const [activeFile, setActiveFile] = useState<string>("/main.py");
@@ -53,7 +54,7 @@ const HomePage = () => {
   return (
     <TooltipProvider>
       <Toaster position="bottom-right"/>
-
+      <WorkspaceProvider>
       <CodeExecutionProvider>
         <div className={`h-screen flex flex-col ${isDark ? "dark" : ""}`}>
           <TopBar isDark={isDark} onToggleTheme={toggleTheme} />
@@ -112,6 +113,7 @@ const HomePage = () => {
           </ResizablePanelGroup>
         </div>
       </CodeExecutionProvider>
+      </WorkspaceProvider>
     </TooltipProvider>
   );
 };

@@ -11,9 +11,10 @@ import {
   getBackendOptions, 
   NodeModel
 } from "@minoru/react-dnd-treeview";
-import { FileTreeNode } from "./FileTreeNode"; // Adjusted path
-import { CustomDragPreview } from "./CustomDragPreview"; // Adjusted path
-import { FileSystemNodeData, updateAllPaths, initializeTreeWithFileSystemNodeData } from "@/lib/filesystem";
+import { FileTreeNode } from "./FileTreeNode"; 
+import { CustomDragPreview } from "./CustomDragPreview"; 
+import type { FileSystemNodeData } from "@/types/filesystem"; 
+import { updateAllPaths, initializeTreeWithFileSystemNodeData } from "@/lib/filesystem";
 import { useAuth } from "@clerk/react-router";
 import { toast } from "@/components/ui/sonner"; 
 import { cn } from "@/lib/utils"; 

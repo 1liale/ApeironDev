@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useState, useRef, useCallback, ReactNode, useEffect } from 'react';
-import { executeCode, ExecuteRequestBody } from '@/lib/api';
+import { executeCodeAuth, executeCode } from '@/lib/api';
+import type { ExecuteRequestBody } from '@/types/api';
+import { useAuth } from '@clerk/react-router';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { firestoreDB } from '@/lib/firebase'; // Firebase integration
 import { doc, onSnapshot } from 'firebase/firestore'; // Firestore functions
+import { toast } from '@/components/ui/sonner'; // For error notifications
 
 const JOBS_COLLECTION_ID = import.meta.env.VITE_FIRESTORE_JOBS_COLLECTION || 'Job';
 
@@ -76,6 +80,14 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [activeFileForExecution, setActiveFileForExecution] = useState<string>('main.py');
   
+  const { getToken, isSignedIn } = useAuth();
+  const { 
+    selectedWorkspace, 
+    currentWorkspaceManifest, 
+    currentWorkspaceVersion,
+    // fileContentCache // Not directly used in `execute` but available if needed for `filesInEditor`
+  } = useWorkspace();
+
   const handleJobCompletionOrFailure = useCallback((finalMessage: string) => {
     setIsExecuting(false);
     setConsoleOutput(prev => [...prev, finalMessage]);
@@ -125,19 +137,36 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
 
   const execute = useCallback(async (): Promise<void> => {
     if (!editorRef.current) {
+      toast.error('Editor not available.');
       setConsoleOutput(prev => [...prev, 'Error: Editor not available.']);
       return;
     }
 
     const code = editorRef.current.getValue();
-    if (!code.trim()) {
-      setConsoleOutput(prev => [...prev, 'Error: Cannot execute empty code.']);
-      return;
+    
+    // Consolidated check for empty code or no active file for execution.
+    // If there's an active file, its content is in `code`. If `code` is empty, the file is empty.
+    // If there's no active file, but `code` is also empty, then there's nothing to run.
+    if (!activeFileForExecution && !code.trim()) {
+        toast.error('No active file and no code in editor to execute.');
+        setConsoleOutput(prev => [...prev, 'Error: No active file and no code to execute.']);
+        return;
+    }
+    // If there is an active file for execution (entrypoint) but its content (code) is empty.
+    if (activeFileForExecution && !code.trim()) {
+        toast.error(`Cannot execute empty file: "${activeFileForExecution}".`);
+        setConsoleOutput(prev => [...prev, `Error: Cannot execute empty file: "${activeFileForExecution}".`]);
+        return;
     }
 
-    const language = getLanguageForExecution(activeFileForExecution);
+    // Determine language. If no active file, but there is code, assume python for public execution for now.
+    // This part might need refinement based on desired behavior for public execution without a file context.
+    const effectiveFilenameForLanguage = activeFileForExecution || "default.py";
+    const language = getLanguageForExecution(effectiveFilenameForLanguage);
+
     if (!language) {
-      setConsoleOutput(prev => [...prev, `Error: Language for file "${activeFileForExecution}" is not supported for execution.`]);
+      toast.error(`Language for "${effectiveFilenameForLanguage}" is not supported.`);
+      setConsoleOutput(prev => [...prev, `Error: Language for file "${effectiveFilenameForLanguage}" is not supported for execution.`]);
       return;
     }
 
@@ -145,30 +174,66 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
     setConsoleOutput(prev => [...prev, 'Executing code...']);
 
     try {
-      const response = await executeCode({
-        code,
-        language,
-        input: consoleInputValue,
-      });
+      let response;
+      if (isSignedIn && selectedWorkspace && currentWorkspaceManifest && currentWorkspaceVersion !== null && activeFileForExecution) {
+        const token = await getToken();
+        if (!token) {
+          throw new Error('Authentication token not available.');
+        }
+
+        // For executeCodeAuth, filesInEditor should represent the state of files relevant to the sync part.
+        // The simplest for now is to send the state of the active file if its content has been edited.
+        // A more robust implementation would consider all edited files if the editor supports multiple dirty files.
+        const filesInEditor = [{ filePath: activeFileForExecution, content: code }];
+
+        response = await executeCodeAuth(
+          selectedWorkspace.workspaceId,
+          token,
+          filesInEditor, 
+          { language, entrypointFile: activeFileForExecution, input: consoleInputValue },
+          currentWorkspaceManifest,
+          currentWorkspaceVersion
+        );
+        toast.info(`Authenticated execution started for ${activeFileForExecution} in ${selectedWorkspace.name}.`);
+      } else {
+        // Fallback to public execution
+        if (!code.trim()){ // Public execution also requires code
+            toast.error("Cannot execute empty code for public execution.");
+            handleJobCompletionOrFailure("Error: Cannot execute empty code.");
+            return;
+        }
+        response = await executeCode({
+          code, 
+          language, 
+          input: consoleInputValue,
+        });
+        toast.info(`Public execution started.`);
+      }
 
       if (response.error || !response.job_id) {
         handleJobCompletionOrFailure(`Error: ${response.error || 'Failed to start execution.'}`);
         return;
       }
-
-      // setConsoleOutput(prev => [...prev, `Job ID: ${response.job_id}`]);
-      setCurrentJobId(response.job_id); // This triggers the useEffect to start the new listener
+      setCurrentJobId(response.job_id); 
 
     } catch (apiError) {
-      console.error("API call to executeCode failed:", apiError);
-      handleJobCompletionOrFailure(`Error starting execution: ${apiError instanceof Error ? apiError.message : String(apiError)}`);
+      console.error("API call to execute failed:", apiError);
+      const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
+      toast.error(`Execution failed: ${errorMessage}`);
+      handleJobCompletionOrFailure(`Error starting execution: ${errorMessage}`);
     }
   }, [
+    editorRef, 
     consoleInputValue, 
     activeFileForExecution, 
     setIsExecuting, 
     setConsoleOutput,
     handleJobCompletionOrFailure,
+    isSignedIn, 
+    selectedWorkspace, 
+    currentWorkspaceManifest, 
+    currentWorkspaceVersion, 
+    getToken 
   ]);
 
   const debouncedExecute = customDebounce(execute, 1000);
@@ -182,7 +247,7 @@ export const CodeExecutionProvider = ({ children }: CodeExecutionProviderProps) 
     isExecuting,
     setIsExecuting,
     triggerExecution: debouncedExecute, 
-    currentJobId, // Still useful for display or other logic if needed
+    currentJobId,
     activeFileForExecution,
     setActiveFileForExecution,
   };
