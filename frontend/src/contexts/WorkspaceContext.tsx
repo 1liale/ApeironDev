@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useMemo } from 'react';
 import { useAuth } from '@clerk/react-router';
 import {
   listWorkspaces,
@@ -12,15 +12,16 @@ import type {
   WorkspaceFileManifestItem,
 } from '@/types/api';
 import { toast } from '@/components/ui/sonner';
+import { auth } from '@/lib/firebase';
+
+interface CachedWorkspaces {
+  userId: string;
+  workspaces: WorkspaceSummaryItem[];
+}
 
 interface CachedManifestData {
   manifest: WorkspaceFileManifestItem[];
   version: string | number;
-}
-
-interface ActiveFileIdentifier {
-  workspaceId: string;
-  filePath: string;
 }
 
 interface WorkspaceContextState {
@@ -29,8 +30,6 @@ interface WorkspaceContextState {
   currentWorkspaceManifest: WorkspaceFileManifestItem[] | null;
   currentWorkspaceVersion: string | number | null;
   manifestAndVersionCache: Record<string, CachedManifestData>;
-  activeFileIdentifier: ActiveFileIdentifier | null;
-  activeFileContent: string | null;
   fileContentCache: Record<string, Record<string, string>>;
   isLoadingWorkspaces: boolean;
   isLoadingManifest: boolean;
@@ -42,25 +41,27 @@ interface WorkspaceContextActions {
   selectWorkspace: (workspace: WorkspaceSummaryItem | null) => void;
   refreshWorkspaces: () => Promise<void>;
   createNewWorkspace: (name: string) => Promise<WorkspaceSummaryItem | null>;
-  selectFileToView: (filePath: string) => void;
+  refreshWorkspace: (workspace: WorkspaceSummaryItem) => Promise<void>;
+  setWorkspaceVersion: (version: string | number) => void;
 }
 
+export type WorkspaceContextType = WorkspaceContextState & WorkspaceContextActions;
+
 const WorkspaceContext = createContext<
-  (WorkspaceContextState & WorkspaceContextActions) | undefined
+  WorkspaceContextType | undefined
 >(undefined);
 
+const SESSION_STORAGE_WORKSPACES_KEY = 'app_workspaces';
+const SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY = 'app_selected_workspace_id';
+
 export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn, userId } = useAuth();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummaryItem[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummaryItem | null>(null);
   const [currentWorkspaceManifest, setCurrentWorkspaceManifest] = useState<WorkspaceFileManifestItem[] | null>(null);
   const [currentWorkspaceVersion, setCurrentWorkspaceVersion] = useState<string | number | null>(null);
   const [manifestAndVersionCache, setManifestAndVersionCache] = useState<Record<string, CachedManifestData>>({});
-
-  const [activeFileIdentifier, setActiveFileIdentifier] = useState<ActiveFileIdentifier | null>(null);
-  const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
   const [fileContentCache, setFileContentCache] = useState<Record<string, Record<string, string>>>({});
-
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [isLoadingWorkspaceContents, setIsLoadingWorkspaceContents] = useState(false);
@@ -72,164 +73,196 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     setCurrentWorkspaceManifest(null);
     setCurrentWorkspaceVersion(null);
     setManifestAndVersionCache({});
-    setActiveFileIdentifier(null);
-    setActiveFileContent(null);
     setFileContentCache({});
     setIsLoadingWorkspaces(false);
     setIsLoadingManifest(false);
     setIsLoadingWorkspaceContents(false);
     setIsCreatingWorkspace(false);
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_WORKSPACES_KEY);
+      sessionStorage.removeItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY);
+    } catch (error) {
+      console.error('Failed to clear session storage:', error);
+    }
   }, []);
 
   const fetchWorkspaces = useCallback(async () => {
-    if (!isSignedIn) {
-      resetWorkspaceState();
-      return;
+    if (!isSignedIn || !userId) {
+      return; // Should not happen if called from the main useEffect logic, but a safeguard.
     }
+    
     setIsLoadingWorkspaces(true);
     try {
-      const token = await getToken();
+      const token = await auth.currentUser.getIdToken();
       if (!token) throw new Error('Authentication token not available.');
+      
       const fetchedWorkspaces = await listWorkspaces(token);
       setWorkspaces(fetchedWorkspaces);
 
-      if (selectedWorkspace) {
-        const stillExists = fetchedWorkspaces.find(ws => ws.workspaceId === selectedWorkspace.workspaceId);
-        if (stillExists) {
-          setSelectedWorkspace(stillExists);
-        } else {
-          setSelectedWorkspace(null);
-          setCurrentWorkspaceManifest(null);
-          setCurrentWorkspaceVersion(null);
-          if (activeFileIdentifier && activeFileIdentifier.workspaceId === selectedWorkspace.workspaceId) {
-             setActiveFileIdentifier(null);
-             setActiveFileContent(null);
-          }
-        }
-      } else if (fetchedWorkspaces.length === 0) {
-         setSelectedWorkspace(null);
-         setCurrentWorkspaceManifest(null);
-         setCurrentWorkspaceVersion(null);
-      }
+      const cachePayload: CachedWorkspaces = { userId, workspaces: fetchedWorkspaces };
+      sessionStorage.setItem(SESSION_STORAGE_WORKSPACES_KEY, JSON.stringify(cachePayload));
+      toast.info('Workspaces loaded from server.');
+
     } catch (error) {
       console.error('Failed to fetch workspaces:', error);
       toast.error('Failed to load workspaces.');
     } finally {
       setIsLoadingWorkspaces(false);
     }
-  }, [getToken, isSignedIn, selectedWorkspace, activeFileIdentifier]);
+  }, [isSignedIn, userId]);
 
-  const handleSelectWorkspace = useCallback(async (workspace: WorkspaceSummaryItem | null) => {
-    setSelectedWorkspace(workspace);
+  useEffect(() => {
+    if (isSignedIn && userId) {
+      try {
+        const cachedDataJSON = sessionStorage.getItem(SESSION_STORAGE_WORKSPACES_KEY);
+        if (cachedDataJSON) {
+          const cachedData: CachedWorkspaces = JSON.parse(cachedDataJSON);
+          if (cachedData.userId === userId) {
+            // Valid cache for the current user exists
+            const loadedWorkspaces = cachedData.workspaces;
+            setWorkspaces(loadedWorkspaces);
+            toast.info('Workspaces loaded from cache.');
 
-    if (!workspace || (activeFileIdentifier && activeFileIdentifier.workspaceId !== workspace.workspaceId)) {
-      setActiveFileIdentifier(null);
-      setActiveFileContent(null);
+            // Restore selected workspace from session storage
+            const lastSelectedId = sessionStorage.getItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY);
+            if (lastSelectedId) {
+                const workspaceToSelect = loadedWorkspaces.find(ws => ws.workspaceId === lastSelectedId);
+                if (workspaceToSelect) {
+                    // This will trigger the next useEffect to fetch content
+                    setSelectedWorkspace(workspaceToSelect);
+                } else {
+                    sessionStorage.removeItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY);
+                }
+            }
+            return; // Do not fetch from API
+          }
+        }
+        // If we reach here, cache is invalid (wrong user) or doesn't exist.
+        fetchWorkspaces();
+      } catch (error) {
+        console.error('Failed to process session cache, fetching from server:', error);
+        toast.error('Failed to load workspaces. Please try manually refreshing.');
+      }
+    } else {
+      // User is not signed in
+      resetWorkspaceState();
     }
+  }, [isSignedIn, userId, fetchWorkspaces, resetWorkspaceState]);
 
-    if (!workspace) {
+  const refreshWorkspace = useCallback(async (workspaceToRefresh: WorkspaceSummaryItem) => {
+    const { workspaceId, name } = workspaceToRefresh;
+    setIsLoadingManifest(true);
+    // We don't clear the selected workspace, just its details
+    setCurrentWorkspaceManifest(null); 
+    setCurrentWorkspaceVersion(null);
+    try {
+      toast.info(`Refreshing workspace: ${name}...`);
+      const token = await auth.currentUser.getIdToken();
+      if (!token) throw new Error('Authentication token not available.');
+      
+      const manifestResponse = await getWorkspaceManifestFromServer(workspaceId, token);
+      const { manifest, workspaceVersion } = manifestResponse;
+
+      setManifestAndVersionCache(prev => ({ ...prev, [workspaceId]: { manifest, version: workspaceVersion } }));
+      setCurrentWorkspaceManifest(manifest);
+      setCurrentWorkspaceVersion(workspaceVersion);
+      toast.success(`Manifest for "${name}" refreshed.`);
+
+      if (manifest && manifest.length > 0) {
+        setIsLoadingWorkspaceContents(true);
+        const newFileContents: Record<string, string> = {};
+        const contentPromises = manifest.map(async (fileItem) => {
+          if (fileItem.contentUrl) {
+            const content = await fetchFileContent(fileItem.contentUrl, fileItem.filePath);
+            if (content !== null) {
+              newFileContents[fileItem.filePath] = content;
+            }
+          }
+        });
+        await Promise.all(contentPromises);
+        setFileContentCache(prevCache => ({
+          ...prevCache,
+          [workspaceId]: { ...(prevCache[workspaceId] || {}), ...newFileContents },
+        }));
+        toast.info(`All files for "${name}" re-synced.`);
+        setIsLoadingWorkspaceContents(false);
+      } else {
+         setFileContentCache(prevCache => ({ ...prevCache, [workspaceId]: {} }));
+      }
+    } catch (error) {
+      console.error(`Failed to refresh manifest or contents for ${name}:`, error);
+      toast.error(`Failed to refresh workspace data for "${name}".`);
       setCurrentWorkspaceManifest(null);
       setCurrentWorkspaceVersion(null);
-      return;
+    } finally {
+      setIsLoadingManifest(false);
+      setIsLoadingWorkspaceContents(false);
     }
+  }, []);
 
-    const { workspaceId } = workspace;
+  const setWorkspaceVersion = useCallback((version: string | number) => {
+    setCurrentWorkspaceVersion(version);
+    if (selectedWorkspace) {
+      setManifestAndVersionCache(prev => ({
+        ...prev,
+        [selectedWorkspace.workspaceId]: {
+          ...prev[selectedWorkspace.workspaceId],
+          version: version,
+        },
+      }));
+    }
+  }, [selectedWorkspace]);
 
-    if (manifestAndVersionCache[workspaceId]) {
+  // New effect to handle fetching data when a workspace is selected
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      return; // Nothing to do if no workspace is selected
+    }
+    const { workspaceId } = selectedWorkspace;
+
+    // Fetch data if it's not in the in-memory cache
+    if (!manifestAndVersionCache[workspaceId]) {
+      refreshWorkspace(selectedWorkspace);
+    } else {
+      // If it is in the cache, ensure the context state is aligned.
+      // This handles cases where the selection is restored from session storage
+      // but the manifest data is already in the (in-memory) cache from the same session.
       const { manifest, version } = manifestAndVersionCache[workspaceId];
       setCurrentWorkspaceManifest(manifest);
       setCurrentWorkspaceVersion(version);
-      toast.info(`Workspace "${workspace.name}" manifest loaded from cache.`);
-    } else {
-      setIsLoadingManifest(true);
-      setCurrentWorkspaceManifest(null);
-      setCurrentWorkspaceVersion(null);
-      try {
-        const token = await getToken();
-        if (!token) throw new Error('Authentication token not available.');
-        
-        const manifestResponse = await getWorkspaceManifestFromServer(workspaceId, token);
-        const { manifest, workspaceVersion } = manifestResponse;
-
-        setManifestAndVersionCache(prev => ({ ...prev, [workspaceId]: { manifest, version: workspaceVersion } }));
-        setCurrentWorkspaceManifest(manifest);
-        setCurrentWorkspaceVersion(workspaceVersion);
-        toast.success(`Manifest for "${workspace.name}" loaded.`);
-        setIsLoadingManifest(false);
-
-        if (manifest && manifest.length > 0) {
-          setIsLoadingWorkspaceContents(true);
-          const newFileContents: Record<string, string> = {};
-          const contentPromises = manifest.map(async (fileItem) => {
-            if (fileItem.contentUrl) {
-              const content = await fetchFileContent(fileItem.contentUrl, fileItem.filePath);
-              if (content !== null) {
-                newFileContents[fileItem.filePath] = content;
-              }
-            }
-          });
-          await Promise.all(contentPromises);
-          setFileContentCache(prevCache => ({
-            ...prevCache,
-            [workspaceId]: { ...(prevCache[workspaceId] || {}), ...newFileContents },
-          }));
-          toast.info(`All files for "${workspace.name}" processed.`);
-          setIsLoadingWorkspaceContents(false);
-        } else {
-           setFileContentCache(prevCache => ({ ...prevCache, [workspaceId]: {} }));
-        }
-
-      } catch (error) {
-        console.error(`Failed to load manifest or contents for ${workspace.name}:`, error);
-        toast.error(`Failed to load workspace data for "${workspace.name}".`);
-        setCurrentWorkspaceManifest(null);
-        setCurrentWorkspaceVersion(null);
-        setIsLoadingManifest(false);
-        setIsLoadingWorkspaceContents(false);
-      }
     }
-  }, [getToken, manifestAndVersionCache, activeFileIdentifier]);
+  }, [selectedWorkspace, manifestAndVersionCache, refreshWorkspace]);
 
-  useEffect(() => {
-    if (isSignedIn) {
-      fetchWorkspaces();
+  const handleSelectWorkspace = useCallback((workspace: WorkspaceSummaryItem | null) => {
+    setSelectedWorkspace(workspace);
+    if (workspace) {
+      sessionStorage.setItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY, workspace.workspaceId);
     } else {
-      resetWorkspaceState();
+      sessionStorage.removeItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY);
     }
-  }, [isSignedIn, fetchWorkspaces, resetWorkspaceState]);
+  }, []);
 
-  const refreshWorkspaces = async () => {
-    await fetchWorkspaces();
-  };
-
-  const createNewWorkspace = async (name: string): Promise<WorkspaceSummaryItem | null> => {
+  const createNewWorkspace = useCallback(async (name: string): Promise<WorkspaceSummaryItem | null> => {
     if (!isSignedIn) {
       toast.error('You must be signed in to create a workspace.');
       return null;
     }
     setIsCreatingWorkspace(true);
     try {
-      const token = await getToken();
+      const token = await auth.currentUser.getIdToken();
       if (!token) throw new Error('Authentication token not available.');
       const body: CreateWorkspaceRequestBody = { name };
       
       const newWsData = await createWorkspace(body, token) as WorkspaceSummaryItem & { initialVersion?: string | number };
-      const initialVersion = newWsData.initialVersion || '1';
-
+      
       toast.success(`Workspace "${newWsData.name}" created successfully!`);
       
-      await fetchWorkspaces();
+      await fetchWorkspaces(); // Re-fetch to get the new complete list
 
-      const newFullWsSummary: WorkspaceSummaryItem = {
+      const newFullWsSummary = {
         ...newWsData,
         userRole: 'owner',
       };
-
-      setManifestAndVersionCache(prev => ({
-        ...prev,
-        [newWsData.workspaceId]: { manifest: [], version: initialVersion },
-      }));
-      setFileContentCache(prev => ({ ...prev, [newWsData.workspaceId]: {} }));
       
       handleSelectWorkspace(newFullWsSummary);
 
@@ -241,24 +274,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     } finally {
       setIsCreatingWorkspace(false);
     }
-  };
-
-  const selectFileToView = useCallback((filePath: string) => {
-    if (!selectedWorkspace || !filePath) {
-      setActiveFileIdentifier(null);
-      setActiveFileContent(null);
-      return;
-    }
-    const { workspaceId } = selectedWorkspace;
-    setActiveFileIdentifier({ workspaceId, filePath });
-
-    const cachedContent = fileContentCache[workspaceId]?.[filePath];
-    if (cachedContent !== undefined) {
-      setActiveFileContent(cachedContent);
-    } else {
-      setActiveFileContent(null);
-    }
-  }, [selectedWorkspace, fileContentCache]);
+  }, [isSignedIn, fetchWorkspaces, handleSelectWorkspace]);
 
   const value = {
     workspaces,
@@ -266,23 +282,22 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     currentWorkspaceManifest,
     currentWorkspaceVersion,
     manifestAndVersionCache,
-    activeFileIdentifier,
-    activeFileContent,
     fileContentCache,
     isLoadingWorkspaces,
     isLoadingManifest,
     isLoadingWorkspaceContents,
     isCreatingWorkspace,
     selectWorkspace: handleSelectWorkspace,
-    refreshWorkspaces,
+    refreshWorkspaces: fetchWorkspaces, // Manual refresh just calls fetch
     createNewWorkspace,
-    selectFileToView,
+    refreshWorkspace,
+    setWorkspaceVersion,
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 };
 
-export const useWorkspace = (): WorkspaceContextState & WorkspaceContextActions => {
+export const useWorkspace = (): WorkspaceContextType => {
   const context = useContext(WorkspaceContext);
   if (context === undefined) {
     throw new Error('useWorkspace must be used within a WorkspaceProvider');

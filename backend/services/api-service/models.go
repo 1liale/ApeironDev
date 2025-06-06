@@ -127,8 +127,9 @@ type ConfirmSyncFileItem struct {
 
 // ConfirmSyncRequest is the request body for POST /api/sync/:workspaceId/confirm.
 type ConfirmSyncRequest struct {
-	WorkspaceVersion string                `json:"workspaceVersion" binding:"required"` // The NewWorkspaceVersion from /sync response
-	Files            []ConfirmSyncFileItem `json:"files" binding:"required"`
+	NewWorkspaceVersion string                `json:"newWorkspaceVersion" binding:"required"`
+	BaseVersion         string                `json:"baseVersion" binding:"required"`
+	Actions             []ConfirmSyncFileItem `json:"actions" binding:"required"`
 }
 
 // ConfirmSyncResponseItem details the server-side outcome of confirming a single file operation.

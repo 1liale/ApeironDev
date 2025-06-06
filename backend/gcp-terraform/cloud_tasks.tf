@@ -23,63 +23,12 @@ resource "google_cloud_tasks_queue" "python_execution_queue" {
   }
 }
 
-# Dedicated Service Account for api-service
-resource "google_service_account" "api_service_sa" {
-  provider     = google
-  project      = var.gcp_project_id
-  account_id   = "api-service-sa"
-  display_name = "API Service Account"
-}
-
-# Allow the api-service SA to enqueue tasks to any queue in the project
-resource "google_project_iam_member" "api_service_project_tasks_enqueuer" {
-  provider = google
-  project  = var.gcp_project_id
-  role     = "roles/cloudtasks.enqueuer"
-  member   = "serviceAccount:${google_service_account.api_service_sa.email}"
-}
-
-resource "google_service_account" "code_execution_worker_sa" {
-  provider     = google
-  project      = var.gcp_project_id
-  account_id   = "code-exec-worker-sa"
-  display_name = "Code Execution Worker Service Account"
-}
-
-# Grant the Cloud Tasks Service Agent permission to act as the Code Execution Worker SA
-# This is required for Cloud Tasks to generate an OIDC token for the worker SA.
-resource "google_service_account_iam_member" "tasks_agent_can_act_as_worker_sa" {
-  provider           = google
-  service_account_id = google_service_account.code_execution_worker_sa.name // The SA that will be impersonated
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com" // The Cloud Tasks Service Agent
-}
-
-data "google_iam_policy" "tasks_invoker_policy" {
-  provider = google
-  binding {
-    role = "roles/run.invoker"
-    members = [
-      "serviceAccount:${google_service_account.code_execution_worker_sa.email}",
-    ]
-  }
-}
-
-resource "google_cloud_run_service_iam_policy" "tasks_invokes_python_worker" {
-  provider    = google
-  project     = google_cloud_run_service.python_worker.project
-  location    = google_cloud_run_service.python_worker.location
-  service     = google_cloud_run_service.python_worker.name
-  policy_data = data.google_iam_policy.tasks_invoker_policy.policy_data
-
-  depends_on = [google_cloud_run_service.python_worker] 
-}
-
 output "python_execution_queue_name" {
   description = "Name of the dedicated Python execution Cloud Tasks queue"
   value       = google_cloud_tasks_queue.python_execution_queue.name
 }
 
 output "api_service_sa_email" {
-  value = google_service_account.api_service_sa.email
+  description = "Email of the API Service Account"
+  value       = google_service_account.api_service_sa.email
 }

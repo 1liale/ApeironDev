@@ -66,11 +66,11 @@ const ClerkThemeProviderWrapper = ({ children }: { children: React.ReactNode }) 
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+  // <React.StrictMode>
     <BrowserRouter>
       <ClerkThemeProviderWrapper>
         <App />
       </ClerkThemeProviderWrapper>
     </BrowserRouter>
-  </React.StrictMode>,
+  // </React.StrictMode>,
 )

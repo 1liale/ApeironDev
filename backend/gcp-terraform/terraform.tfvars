@@ -1,3 +1,4 @@
+# --- PUBLIC GCP Variables ---
 gcp_project_id = "remotepythonide"
 gcp_region     = "us-east1"
 
