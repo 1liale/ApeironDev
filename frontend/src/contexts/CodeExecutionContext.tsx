@@ -16,8 +16,7 @@ import { auth, firestoreDB } from "@/lib/firebase"; // Firebase integration
 import { doc, onSnapshot } from "firebase/firestore"; // Firestore functions
 import { toast } from "@/components/ui/sonner"; // For error notifications
 
-const JOBS_COLLECTION_ID =
-  import.meta.env.VITE_FIRESTORE_JOBS_COLLECTION || "Job";
+const JOBS_COLLECTION_ID = import.meta.env.VITE_FIRESTORE_JOBS_COLLECTION;
 
 // Custom debounce function
 // Accepts a function F that takes specific arguments (T) and returns Promise<void> or void (R).
