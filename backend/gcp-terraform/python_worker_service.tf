@@ -53,11 +53,11 @@ resource "google_cloud_run_service" "python_worker" {
           value = var.gcp_project_id
         }
         env {
-          name  = "FIRESTORE_JOBS_COLLECTION"
+          name  = "COLLECTION_ID_JOBS"
           value = var.firestore_jobs_collection
         }
         env {
-          name  = "PYTHON_EXECUTION_TIMEOUT"
+          name  = "DEFAULT_EXECUTION_TIMEOUT_SEC"
           value = var.python_execution_timeout
         }
         env {

@@ -11,10 +11,10 @@ resource "google_cloud_tasks_queue" "python_execution_queue" {
   }
 
   retry_config {
-    max_attempts       = 3
+    max_attempts       = 2
     min_backoff        = "1s"
     max_backoff        = "10s"
-    max_doublings      = 3
+    max_doublings      = 2
     max_retry_duration = "3600s"
   }
 

@@ -7,15 +7,15 @@ from botocore.client import BaseClient
 
 # Environment Variables
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-COLLECTION_ID_JOBS = os.getenv("COLLECTION_ID_JOBS", "Job") 
+COLLECTION_ID_JOBS = os.getenv("COLLECTION_ID_JOBS") 
 DEFAULT_EXECUTION_TIMEOUT_SEC = int(os.getenv("DEFAULT_EXECUTION_TIMEOUT_SEC", "30"))
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = os.getenv("LOG_LEVEL")
 
 # R2/S3 Environment Variables
-R2_ENDPOINT_URL = os.getenv('R2_ENDPOINT_URL')
+R2_ACCOUNT_ID = os.getenv('R2_ACCOUNT_ID')
 R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID')
 R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY')
-R2_REGION_NAME = os.getenv('R2_REGION_NAME', 'auto')
+R2_BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
 
 # Global clients - to be initialized by functions below
 firestore_client: google_firestore.Client | None = None
@@ -56,15 +56,20 @@ def init_clients():
         firestore_client = None
 
     # Initialize S3 client for R2
-    if R2_ENDPOINT_URL and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY:
+    if R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY:
         try:
-            s3_client = boto3.client( # This line must remain boto3.client()
+            endpoint_url = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+            s3_client = boto3.client(
                 's3',
-                endpoint_url=R2_ENDPOINT_URL,
+                endpoint_url=endpoint_url,
                 aws_access_key_id=R2_ACCESS_KEY_ID,
                 aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-                region_name=R2_REGION_NAME,
-                config=boto3.session.Config(signature_version='s3v4')
+                region_name="auto",
+                config=boto3.session.Config(
+                    signature_version='s3v4',
+                    s3={'addressing_style': 'path'}
+                )
             )
             logger.info("Boto3 S3 client for R2 initialized.")
         except Exception as e:
@@ -77,5 +82,5 @@ def init_clients():
 # Perform initial checks on import
 if not GCP_PROJECT_ID:
     logger.warning("GCP_PROJECT_ID not set at import time.") # Log warning early
-if not all([R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]):
+if not all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]):
     logger.warning("R2 client env vars not fully set at import time.") # Log warning early 
