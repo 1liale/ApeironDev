@@ -43,7 +43,6 @@ export interface WorkspaceSummaryItem {
   createdBy: string;
   createdAt: string; // ISO 8601 date string
   userRole: string;  // Role of the current user in this workspace
-  // Consider adding currentVersion here if useful for summaries before selection
 }
 
 // ====== File, Manifest, and Content Types ======
@@ -120,8 +119,9 @@ export interface ConfirmSyncFileItemAPI {
 }
 
 export interface ConfirmSyncRequestAPI {
-  workspaceVersion: string | number; // The version server provided in SyncResponseAPI
-  files: ConfirmSyncFileItemAPI[];
+  newWorkspaceVersion: string | number; // The new version to be set
+  baseVersion: string | number; // The version the sync started from
+  actions: ConfirmSyncFileItemAPI[]; // The actions performed by the client
 }
 
 // Represents a single item in the /sync/confirm response.
@@ -147,4 +147,9 @@ export interface ExecuteAuthRequestBody {
   entrypointFile: string; // file path relative to workspace root
   input?: string;
   // Potentially: workspaceId if not inferred from route/token scope
+}
+
+export interface ExecuteCodeAuthResponse {
+  executionResponse: ExecuteResponse;
+  newWorkspaceVersion?: string | number;
 } 

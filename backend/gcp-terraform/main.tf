@@ -20,21 +20,3 @@ variable "gcp_region" {
   type        = string
   default     = "us-east1"
 }
-
-variable "firestore_jobs_collection" {
-  description = "Name of the Firestore collection for jobs"
-  type        = string
-  default     = "Job" 
-}
-
-variable "python_execution_timeout" {
-  description = "Default execution timeout in seconds for Python worker"
-  type        = string # Cloud Run env vars are strings
-  default     = "60"
-}
-
-variable "region" {
-  description = "GCP region"
-  type        = string
-  default     = "us-central1"
-}

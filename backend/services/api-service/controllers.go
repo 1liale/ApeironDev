@@ -225,7 +225,7 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 				var serverMeta FileMetadata
 				if err := docs[0].DataTo(&serverMeta); err == nil {
 					currentAction.R2ObjectKey = serverMeta.R2ObjectKey
-					currentAction.ActionRequired = "delete"
+				currentAction.ActionRequired = "delete"
 					itemLogCtx.Info("Marked for deletion. Server will delete on confirm.")
 				} else {
 					itemLogCtx.WithError(err).Error("Error unmarshalling Firestore data for file to delete.")
@@ -347,52 +347,34 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		return
 	}
 
-	finalVersionToCommit := req.WorkspaceVersion // This is the tentative version from /sync
+	finalVersionToCommit := req.NewWorkspaceVersion
 
-	if len(req.Files) == 0 && finalVersionToCommit != "" { // Client confirms the version bump, but no specific file ops
-		logCtx.Info("ConfirmSync request received with no files to confirm. Updating workspace version only.")
-		err := ac.FirestoreClient.RunTransaction(c.Request.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
-			wsRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
-			// Optional: Could fetch wsRef here to ensure it exists and current version is precursor to finalVersionToCommit
-			// For this simplified case, directly update to the version client is confirming.
-			// A more robust OCC check would involve ensuring the workspace's current version allows this update.
-			return tx.Update(wsRef, []firestore.Update{
-				{Path: "workspace_version", Value: finalVersionToCommit},
-				// {Path: "updated_at", Value: time.Now().UTC()}, // If Workspace has updated_at
-			})
-		})
-		if err != nil {
-			logCtx.WithError(err).Error("Failed to update workspace version for no-file-change confirmation.")
-			c.JSON(http.StatusInternalServerError, ConfirmSyncResponse{
-				Status:       "error",
-				ErrorMessage: "Failed to finalize workspace version: " + err.Error(),
-			})
-			return
-		}
-		c.JSON(http.StatusOK, ConfirmSyncResponse{
-			Status:                "success",
-			FinalWorkspaceVersion: finalVersionToCommit,
-		})
-		return
-	}
+	results := make([]ConfirmSyncResponseItem, 0, len(req.Actions))
+	var overallErrorMessage string
 
-	results := make([]ConfirmSyncResponseItem, 0, len(req.Files))
-	var overallErrorMessage string // To aggregate errors if transaction rolls back for a specific file
-	
 	err = ac.FirestoreClient.RunTransaction(c.Request.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
 		wsRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
-		// Fetch workspace to ensure it exists and its current version is what we expect to update FROM, if needed for stricter OCC.
-		// For now, the main atomicity is updating to finalVersionToCommit.
-		_, err := tx.Get(wsRef) // Get workspace to ensure it exists
+		wsDoc, err := tx.Get(wsRef)
 		if err != nil {
-			logCtx.WithError(err).Error("Transaction: Failed to get workspace document.")
-			return fmt.Errorf("failed to get workspace for confirmation: %w", err)
+			logCtx.WithError(err).Error("Transaction: Failed to get workspace document for version check.")
+			return fmt.Errorf("could not retrieve workspace for confirmation: %w", err)
+		}
+
+		var workspaceData Workspace
+		if err := wsDoc.DataTo(&workspaceData); err != nil {
+			logCtx.WithError(err).Error("Transaction: Failed to parse workspace data.")
+			return fmt.Errorf("could not parse workspace data: %w", err)
+		}
+
+		if workspaceData.WorkspaceVersion != req.BaseVersion {
+			logCtx.Warnf("Transaction: Aborting due to version conflict. Client base: %s, Server current: %s", req.BaseVersion, workspaceData.WorkspaceVersion)
+			return fmt.Errorf("workspace_conflict")
 		}
 
 		filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
-		var transactionError error // To signal rollback from within the loop
+		var transactionError error
 
-		for _, fileConfirm := range req.Files {
+		for _, fileConfirm := range req.Actions {
 			itemLogCtx := logCtx.WithField("filePath", fileConfirm.FilePath)
 			responseItem := ConfirmSyncResponseItem{FilePath: fileConfirm.FilePath}
 
@@ -401,39 +383,37 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 				responseItem.Status = "confirmation_skipped_client_failure"
 				responseItem.Message = fmt.Sprintf("Client reported operation failed: %s", fileConfirm.Error)
 				results = append(results, responseItem)
-				continue 
+				continue
 			}
-			
+
 			var existingDocRef *firestore.DocumentRef
-			var existingMetaData FileMetadata // To store data of existing doc for CreatedAt preservation
+			var existingMetaData FileMetadata
 			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", fileConfirm.FilePath).Limit(1)
-			
-			// Perform Firestore reads (like query) outside the Set/Update/Delete if possible, or use tx.Get for reads if strict serializability is needed with writes.
-			// For simplicity, query result is used to decide if it's a new doc or existing.
-			docs, qErr := query.Documents(ctx).GetAll() // Using ctx from transaction for consistency
+
+			docs, qErr := tx.Documents(query).GetAll()
 			if qErr != nil {
 				itemLogCtx.WithError(qErr).Error("Transaction: Firestore query failed for file metadata.")
 				responseItem.Status = "confirmation_failed_server_error"
 				responseItem.Message = "Server error querying file metadata."
 				results = append(results, responseItem)
-				transactionError = qErr 
-				break 
-			} 
+				transactionError = qErr
+				break
+			}
 			if len(docs) > 0 {
 				existingDocRef = docs[0].Ref
 				if errData := docs[0].DataTo(&existingMetaData); errData != nil {
-				    itemLogCtx.WithError(errData).Warn("Failed to parse existing metadata, CreatedAt might be reset.")
+					itemLogCtx.WithError(errData).Warn("Failed to parse existing metadata, CreatedAt might be reset.")
 				}
 			}
 
 			switch fileConfirm.ActionConfirmed {
 			case "uploaded":
-				if fileConfirm.ClientHash == "" || fileConfirm.ContentType == "" || fileConfirm.R2ObjectKey == ""{
-					itemLogCtx.Warn("Missing clientHash, contentType, or R2ObjectKey for uploaded file confirmation.")
+				if fileConfirm.ClientHash == "" {
+					itemLogCtx.Warn("Missing clientHash for uploaded file confirmation.")
 					responseItem.Status = "confirmation_failed_missing_data"
-					responseItem.Message = "Missing essential data (hash, type, R2 key) for uploaded file."
+					responseItem.Message = "Missing essential data (hash) for uploaded file."
 					transactionError = fmt.Errorf("missing data for uploaded file %s", fileConfirm.FilePath)
-					break // breaks switch
+					break
 				}
 				fileMetadata := FileMetadata{
 					FileName:    filepath.Base(fileConfirm.FilePath),
@@ -441,22 +421,22 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 					R2ObjectKey: fileConfirm.R2ObjectKey,
 					Size:        fileConfirm.Size,
 					ContentType: fileConfirm.ContentType,
-					UserID:      userID, // User performing the sync
+					UserID:      userID,
 					WorkspaceID: workspaceID,
 					Hash:        fileConfirm.ClientHash,
 					UpdatedAt:   time.Now().UTC(),
 				}
 				var firestoreErr error
 				if existingDocRef != nil {
-					fileMetadata.CreatedAt = existingMetaData.CreatedAt // Preserve original creation time
-					if fileMetadata.CreatedAt.IsZero() { // Fallback if not set from existingMeta
-					    fileMetadata.CreatedAt = time.Now().UTC()
+					fileMetadata.CreatedAt = existingMetaData.CreatedAt
+					if fileMetadata.CreatedAt.IsZero() {
+						fileMetadata.CreatedAt = time.Now().UTC()
 					}
-					firestoreErr = tx.Set(existingDocRef, fileMetadata) // Use Set to overwrite existing or create if somehow deleted between query and now
+					firestoreErr = tx.Set(existingDocRef, fileMetadata)
 					responseItem.FileID = existingDocRef.ID
 				} else {
-					newFileID := uuid.New().String() 
-					fileMetadata.FileID = newFileID 
+					newFileID := uuid.New().String()
+					fileMetadata.FileID = newFileID
 					fileMetadata.CreatedAt = time.Now().UTC()
 					newDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(newFileID)
 					firestoreErr = tx.Set(newDocRef, fileMetadata)
@@ -474,126 +454,91 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 			case "deleted":
 				if fileConfirm.R2ObjectKey == "" {
 					itemLogCtx.Warn("Missing R2ObjectKey for deleted file confirmation.")
-					responseItem.Status = "confirmation_failed_missing_r2key"
-					responseItem.Message = "Missing R2ObjectKey for deletion."
-					transactionError = fmt.Errorf("missing R2 key for file to delete %s", fileConfirm.FilePath)
-					break // breaks switch
-				}
-				// Server performs R2 deletion. Crucially, use c.Request.Context() for non-transactional I/O like R2 ops.
-				_, r2Err := ac.R2S3Client.DeleteObject(c.Request.Context(), &s3.DeleteObjectInput{
-					Bucket: aws.String(ac.R2BucketName),
-					Key:    aws.String(fileConfirm.R2ObjectKey),
-				})
-				if r2Err != nil {
-					var nsk *types.NoSuchKey
-					if errors.As(r2Err, &nsk) {
-						itemLogCtx.Warnf("R2 object %s not found for deletion, already deleted?", fileConfirm.R2ObjectKey)
-						responseItem.Status = "r2_object_not_found_assumed_deleted"
-					} else {
-						itemLogCtx.WithError(r2Err).Errorf("Failed to delete object %s from R2.", fileConfirm.R2ObjectKey)
-						responseItem.Status = "confirmation_failed_r2_delete"
-						responseItem.Message = "Server failed to delete file from storage: " + r2Err.Error()
-						transactionError = r2Err 
-						break // breaks switch; R2 delete is critical before metadata change
-					}
 				}
 
-				// Delete Firestore metadata if R2 delete was successful or object not found
 				if existingDocRef != nil {
-					firestoreErr := tx.Delete(existingDocRef)
-					responseItem.FileID = existingDocRef.ID
-					if firestoreErr != nil {
-						itemLogCtx.WithError(firestoreErr).Error("Transaction: Failed to delete file metadata from Firestore.")
+					if fileConfirm.R2ObjectKey != "" {
+						_, r2Err := ac.R2S3Client.DeleteObject(c.Request.Context(), &s3.DeleteObjectInput{
+							Bucket: aws.String(ac.R2BucketName),
+							Key:    aws.String(fileConfirm.R2ObjectKey),
+						})
+						if r2Err != nil {
+							var nsk *types.NoSuchKey
+							if errors.As(r2Err, &nsk) {
+								itemLogCtx.Warnf("R2 object %s not found for deletion, already deleted?", fileConfirm.R2ObjectKey)
+								responseItem.Status = "r2_object_not_found_assumed_deleted"
+							} else {
+								itemLogCtx.WithError(r2Err).Errorf("Failed to delete object %s from R2.", fileConfirm.R2ObjectKey)
+								responseItem.Status = "confirmation_failed_r2_delete"
+								responseItem.Message = "Server failed to delete file from storage: " + r2Err.Error()
+								transactionError = r2Err
+								break
+							}
+						}
+					}
+					fsErr := tx.Delete(existingDocRef)
+					if fsErr != nil {
+						itemLogCtx.WithError(fsErr).Error("Transaction: Failed to delete file metadata.")
 						responseItem.Status = "confirmation_failed_firestore_delete"
 						responseItem.Message = "Failed to delete file metadata."
-						transactionError = firestoreErr // If R2 delete succeeded but FS delete failed, still a transaction error
+						transactionError = fsErr
 					} else {
 						responseItem.Status = "metadata_deleted"
 					}
 				} else {
-					itemLogCtx.Info("File metadata not found for deletion, perhaps already deleted.")
-					if responseItem.Status == "r2_object_not_found_assumed_deleted" { // Both R2 and FS meta agree it's gone.
-					    responseItem.Status = "metadata_not_found_assumed_deleted"
-					} else {
-					    responseItem.Status = "metadata_not_found" // R2 might have been deleted, but meta was already gone.
-					}
+					itemLogCtx.Warn("File metadata not found for deletion, assuming already deleted.")
+					responseItem.Status = "metadata_not_found_assumed_deleted"
 				}
-			default:
-				itemLogCtx.WithField("action_confirmed", fileConfirm.ActionConfirmed).Warn("Invalid action confirmed by client.")
-				responseItem.Status = "invalid_action_confirmed"
-				responseItem.Message = "Invalid action confirmed: " + fileConfirm.ActionConfirmed
-				// This item failed, but doesn't necessarily mean a transaction rollback unless specifically designed.
-				// For now, we will let transactionError handle rollback for critical issues.
 			}
-
 			results = append(results, responseItem)
 			if transactionError != nil {
-				break // Exit loop on first critical error encountered in switch
+				break
 			}
 		}
 
 		if transactionError != nil {
-			overallErrorMessage = transactionError.Error() // Capture the first critical error for the response
-			return transactionError // This rolls back the Firestore transaction
+			overallErrorMessage = transactionError.Error()
+			return transactionError
 		}
 
-		// If loop completes without returning an error, all server-side operations for confirmed files were successful.
-		// Now, commit the new workspace version.
-		itemLogCtx := logCtx.WithField("final_version", finalVersionToCommit)
-		itemLogCtx.Info("Transaction: All file operations successful, updating workspace version.")
 		return tx.Update(wsRef, []firestore.Update{
 			{Path: "workspace_version", Value: finalVersionToCommit},
-			// {Path: "updated_at", Value: time.Now().UTC()}, // If Workspace has updated_at field
 		})
 	})
 
 	if err != nil {
 		logCtx.WithError(err).Error("ConfirmSync transaction failed.")
-		finalErrMessage := "Transaction failed: " + err.Error()
-		if overallErrorMessage != "" && !strings.Contains(finalErrMessage, overallErrorMessage) {
-			finalErrMessage += "; Original error detail: " + overallErrorMessage
+		if strings.Contains(err.Error(), "workspace_conflict") {
+			c.JSON(http.StatusConflict, ConfirmSyncResponse{
+				Status:       "error",
+				ErrorMessage: "Workspace was updated by another session. Please refresh and try again.",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, ConfirmSyncResponse{
+				Status:       "error",
+				Results:      results,
+				ErrorMessage: "A server error occurred during final confirmation: " + overallErrorMessage,
+			})
 		}
-
-		c.JSON(http.StatusInternalServerError, ConfirmSyncResponse{
-			Status:       "error",
-			Results:      results, 
-			ErrorMessage: finalErrMessage,
-			// FinalWorkspaceVersion is omitted or set to old version on error
-		})
 		return
 	}
 
-	// Determine overall status based on individual results if transaction was successful
-	finalStatus := "success"
-	for _, res := range results {
-		// Check for any non-successful server-side outcome or client-reported failures
-		if res.Status != "metadata_updated_or_created" &&
-			res.Status != "metadata_deleted" &&
-			res.Status != "r2_object_not_found_assumed_deleted" && // This is considered a success for deletion
-			res.Status != "metadata_not_found_assumed_deleted" &&  // Also a success for deletion
-			res.Status != "metadata_not_found" { // If meta was not found but R2 op might have succeeded, it's a partial success.
-			finalStatus = "partial_failure"
-			break
-		}
-	}
-
-	logCtx.WithField("processed_confirmations_count", len(req.Files)).WithField("final_status", finalStatus).Info("ConfirmSync request processed.")
+	logCtx.WithField("final_version", finalVersionToCommit).Info("ConfirmSync successful.")
 	c.JSON(http.StatusOK, ConfirmSyncResponse{
-		Status:                finalStatus,
+		Status:                "success",
 		Results:               results,
 		FinalWorkspaceVersion: finalVersionToCommit,
 	})
 }
 
-// SanitizePathToDocID is a placeholder. For this refactor, direct path-based doc IDs are avoided in favor of querying by 'file_path'.
-// If direct path to doc ID mapping were used, robust sanitization would be critical.
+// SanitizePathToDocID converts a file path to a Firestore-safe document ID.
 func SanitizePathToDocID(path string) string {
-    sanitized := strings.ReplaceAll(path, "/", "__SLASH__")
-    sanitized = strings.ReplaceAll(sanitized, ".", "__DOT__")
-    if len(sanitized) > 500 { 
-        sanitized = sanitized[:500]
-    }
-    return sanitized
+	sanitized := strings.ReplaceAll(path, "/", "__SLASH__")
+	sanitized = strings.ReplaceAll(sanitized, ".", "__DOT__")
+	if len(sanitized) > 500 { 
+		sanitized = sanitized[:500]
+	}
+	return sanitized
 }
 
 // ExecuteCode handles non-authenticated code execution requests.

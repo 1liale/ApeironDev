@@ -105,32 +105,7 @@ resource "google_cloud_run_service" "api_service" {
     google_project_iam_member.api_service_datastore_user,
     google_project_iam_member.api_service_project_tasks_enqueuer,
     google_artifact_registry_repository.default,
-    google_service_account.api_service_sa,
-    google_service_account.code_execution_worker_sa
+    google_service_account.api_service_sa, 
+    google_service_account.code_execution_worker_sa 
   ]
 }
-
-# IAM policy to allow unauthenticated invocations for the API service
-resource "google_cloud_run_service_iam_member" "api_service_invoker" {
-  provider = google
-  project  = var.gcp_project_id
-  location = var.gcp_region
-  service  = local.api_service_name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
-
-resource "google_project_iam_member" "api_service_sa_token_creator" {
-  provider = google
-  project  = var.gcp_project_id
-  role     = "roles/iam.serviceAccountTokenCreator"
-  member   = "serviceAccount:${google_service_account.api_service_sa.email}"
-}
-
-# This is required for creating tasks on a queue that uses code_execution_worker_sa for OIDC.
-resource "google_service_account_iam_member" "api_service_can_act_as_python_worker_sa" {
-  provider           = google
-  service_account_id = google_service_account.code_execution_worker_sa.name 
-  role               = "roles/iam.serviceAccountUser"                 # Grants iam.serviceAccounts.actAs
-  member             = "serviceAccount:${google_service_account.api_service_sa.email}"
-} 

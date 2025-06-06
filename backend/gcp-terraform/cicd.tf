@@ -8,11 +8,11 @@ resource "google_service_account" "cicd_runner" {
 
 # IAM roles for the CI/CD Service Account
 
-# Allows the SA to push images to Artifact Registry
-resource "google_project_iam_member" "cicd_artifact_registry_writer" {
+# Allows the SA to manage Artifact Registry repositories
+resource "google_project_iam_member" "cicd_artifact_registry_admin" {
   provider = google
   project  = var.gcp_project_id
-  role     = "roles/artifactregistry.writer"
+  role     = "roles/artifactregistry.admin"
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 

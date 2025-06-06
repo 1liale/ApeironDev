@@ -2,6 +2,12 @@ locals {
   python_worker_service_name = "python-worker-service"
 }
 
+variable "python_execution_timeout" {
+  description = "Default execution timeout in seconds for Python worker"
+  type        = string # Cloud Run env vars are strings
+  default     = "60"
+}
+
 # Google Artifact Registry repository for Docker images
 resource "google_artifact_registry_repository" "default" {
   provider      = google
@@ -10,6 +16,15 @@ resource "google_artifact_registry_repository" "default" {
   repository_id = "remoteide-repo" # Your Artifact Registry repo name
   description   = "Docker repository for Remote IDE services"
   format        = "DOCKER"
+
+  cleanup_policies {
+    id     = "delete-untagged-images-after-2-days"
+    action = "DELETE"
+    condition {
+      tag_state  = "UNTAGGED"
+      older_than = "172800s" # 2 days in seconds
+    }
+  }
 }
 
 # Google Cloud Run service for the Python worker

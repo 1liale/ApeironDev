@@ -79,7 +79,7 @@ func LoadConfig() (*AppConfig, error) {
 	cfg.CloudTasksQueuePath = fmt.Sprintf("projects/%s/locations/%s/queues/%s", cfg.GCPProjectID, cfg.GCPRegion, cfg.CloudTasksQueueID)
 
 	if cfg.FirestoreJobsCollection == "" {
-		cfg.FirestoreJobsCollection = "jobs"
+		cfg.FirestoreJobsCollection = "Job"
 	}
 
 	if cfg.LogLevel == "" {
