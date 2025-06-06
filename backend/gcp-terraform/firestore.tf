@@ -11,14 +11,14 @@ resource "google_firestore_database" "default" {
 variable "firestore_jobs_collection" {
   description = "Name of the Firestore collection for jobs"
   type        = string
-  default     = "Job" 
+  default     = "jobs" 
 }
 
 # Enable TTL policy on the 'expires_at' field for the 'Job' collection
 resource "google_firestore_field" "job_ttl_policy" {
   project    = var.gcp_project_id
   database   = google_firestore_database.default.name
-  collection = "Job"
+  collection = var.firestore_jobs_collection
   field      = "expires_at"
 
   # The ttl_config block enables the TTL policy for this field

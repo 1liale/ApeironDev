@@ -21,7 +21,6 @@ type AppConfig struct {
 	R2AccessKeyID           string
 	R2SecretAccessKey       string
 	R2BucketName            string
-	// JWTSecret               string // No longer used for Firebase Auth
 	LogLevel                string
 	Port                    string
 }
@@ -44,7 +43,6 @@ func LoadConfig() (*AppConfig, error) {
 		R2AccessKeyID:           os.Getenv("R2_ACCESS_KEY_ID"),
 		R2SecretAccessKey:       os.Getenv("R2_SECRET_ACCESS_KEY"),
 		R2BucketName:            os.Getenv("R2_BUCKET_NAME"),
-		// JWTSecret:               os.Getenv("JWT_SECRET"), // No longer used
 		LogLevel:                os.Getenv("LOG_LEVEL"),
 		Port:                    os.Getenv("PORT"),
 	}
@@ -62,7 +60,6 @@ func LoadConfig() (*AppConfig, error) {
 		{"PYTHON_WORKER_URL", cfg.PythonWorkerURL},
 		{"WORKER_SA_EMAIL", cfg.WorkerSAEmail},
 		{"FIRESTORE_JOBS_COLLECTION", cfg.FirestoreJobsCollection},
-		// {"JWT_SECRET", cfg.JWTSecret}, // No longer used
 		{"R2_ACCOUNT_ID", cfg.R2AccountID},
 		{"R2_ACCESS_KEY_ID", cfg.R2AccessKeyID},
 		{"R2_SECRET_ACCESS_KEY", cfg.R2SecretAccessKey},
@@ -77,10 +74,6 @@ func LoadConfig() (*AppConfig, error) {
 
 	// Post-process and set defaults for non-critical or derived fields
 	cfg.CloudTasksQueuePath = fmt.Sprintf("projects/%s/locations/%s/queues/%s", cfg.GCPProjectID, cfg.GCPRegion, cfg.CloudTasksQueueID)
-
-	if cfg.FirestoreJobsCollection == "" {
-		cfg.FirestoreJobsCollection = "Job"
-	}
 
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info" // Default log level

@@ -28,6 +28,7 @@ var (
 	firestoreClient *firestore.Client
 	tasksClient     *cloudtasks.Client
 	r2PresignClient *s3.PresignClient
+	r2S3Client      *s3.Client
 	firebaseApp     *firebase.App // Added for Firebase Admin SDK
 )
 
@@ -91,8 +92,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load R2 S3 configuration: %v", err)
 	}
-	// Use the old endpoint as V2 is not availble for go-sdk yet
-	r2S3ClientFromConfig := s3.NewFromConfig(r2AwsCfg, func(o *s3.Options) {
+
+	r2S3Client = s3.NewFromConfig(r2AwsCfg, func(o *s3.Options) {
 		o.EndpointResolver = s3.EndpointResolverFunc(
 			func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
 				return aws.Endpoint{
@@ -104,7 +105,7 @@ func main() {
 			})
 		o.UsePathStyle = true
 	})
-	r2PresignClient = s3.NewPresignClient(r2S3ClientFromConfig)
+	r2PresignClient = s3.NewPresignClient(r2S3Client)
 	log.Info("R2 S3 Client initialized.")
 
 	// Defer client closing
@@ -119,7 +120,6 @@ func main() {
 				log.Errorf("Failed to close Firestore client: %v", err)
 			}
 		}
-		// Note: firebaseApp does not have a Close() method like other clients.
 	}()
 
 	r := gin.New()
@@ -170,7 +170,7 @@ func main() {
 		firestoreClient,
 		tasksClient,
 		r2PresignClient,
-		r2S3ClientFromConfig,
+		r2S3Client,
 		cfg.R2BucketName,
 		cfg.PythonWorkerURL,
 		cfg.WorkerSAEmail,
