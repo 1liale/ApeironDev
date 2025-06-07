@@ -1,3 +1,4 @@
+import { getWorkspaceManifestFromServer } from './api';
 import { toast } from '@/components/ui/sonner';
 
 // Function to fetch file content using a presigned URL
@@ -16,5 +17,35 @@ export const fetchFileContent = async (url: string, filePath: string): Promise<s
     return null;
   }
 };
+
+export async function fetchWorkspaceDetails(
+  workspaceId: string,
+  token: string,
+) {
+  const manifestResponse = await getWorkspaceManifestFromServer(
+    workspaceId,
+    token,
+  );
+  const { manifest, workspaceVersion } = manifestResponse;
+
+  const newFileContents: Record<string, string | null> = {};
+  if (manifest && manifest.length > 0) {
+    const contentPromises = manifest.map(async (fileItem) => {
+      if (fileItem.type === "file" && fileItem.contentUrl) {
+        const content = await fetchFileContent(
+          fileItem.contentUrl,
+          fileItem.filePath,
+        );
+        if (content !== null) {
+          newFileContents[fileItem.filePath] = content;
+        }
+      } else if (fileItem.type === "folder") {
+        newFileContents[fileItem.filePath] = null; // Explicitly mark folders
+      }
+    });
+    await Promise.all(contentPromises);
+  }
+  return { manifest, workspaceVersion, fileContents: newFileContents };
+}
 
 // Other workspace-related utility functions can be added here in the future. 

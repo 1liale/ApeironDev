@@ -72,7 +72,7 @@ export const WorkspaceSelector = ({
     >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="min-w-[180px] justify-between">
+          <Button variant="ghost" className="min-w-[180px] justify-between bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground ring-1 ring-sidebar-border">
             {isLoadingWorkspaces ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : selectedWorkspace ? (

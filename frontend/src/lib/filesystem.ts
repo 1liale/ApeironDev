@@ -1,5 +1,8 @@
 import { NodeModel } from "@minoru/react-dnd-treeview";
-import type { WorkspaceFileManifestItem } from "@/types/api";
+import type {
+  WorkspaceFileManifestItem,
+  ClientSideWorkspaceFileManifestItem,
+} from "@/types/api";
 import type { FileSystemNodeData } from "@/types/filesystem";
 
 export const buildFileTree = (manifest: WorkspaceFileManifestItem[]): NodeModel<FileSystemNodeData>[] => {
@@ -11,34 +14,36 @@ export const buildFileTree = (manifest: WorkspaceFileManifestItem[]): NodeModel<
   const lookup = new Map<string, NodeModel['id']>(); // path -> id
   let idCounter = 1;
 
-  manifest.forEach(item => {
+  // Sort by path to ensure parent directories are created before their children.
+  const sortedManifest = [...manifest].sort((a, b) => a.filePath.localeCompare(b.filePath));
+
+  sortedManifest.forEach(item => {
     const pathParts = item.filePath.split('/');
-    let parentId: NodeModel['id'] = 0;
-    let currentPath = '';
+    const text = pathParts[pathParts.length - 1];
+    const parentPath = pathParts.slice(0, -1).join('/');
+    
+    const parentId = parentPath ? lookup.get(parentPath) ?? 0 : 0;
+    
+    // Check if node already exists (can happen with implicit folder creation)
+    if (lookup.has(item.filePath)) {
+      return;
+    }
 
-    pathParts.forEach((part, index) => {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      
-      if (!lookup.has(currentPath)) {
-        const isFolder = index < pathParts.length - 1;
-        const nodeId = idCounter++;
-        lookup.set(currentPath, nodeId);
+    const nodeId = idCounter++;
+    lookup.set(item.filePath, nodeId);
 
-        const newNode: NodeModel<FileSystemNodeData> = {
-          id: nodeId,
-          parent: parentId,
-          text: part,
-          droppable: isFolder,
-          data: {
-            type: isFolder ? 'folder' : 'file',
-            path: currentPath,
-            isEditing: false, 
-          }
-        };
-        tree.push(newNode);
+    const newNode: NodeModel<FileSystemNodeData> = {
+      id: nodeId,
+      parent: parentId,
+      text: text,
+      droppable: item.type === 'folder',
+      data: {
+        type: item.type,
+        path: item.filePath,
+        isEditing: false, 
       }
-      parentId = lookup.get(currentPath)!;
-    });
+    };
+    tree.push(newNode);
   });
 
   return tree;
@@ -85,4 +90,15 @@ export const updateAllPaths = (
     }
     return node;
   });
+};
+
+export const treeToManifest = (
+  nodes: NodeModel<FileSystemNodeData>[],
+): ClientSideWorkspaceFileManifestItem[] => {
+  return nodes
+    .filter((node) => node.data)
+    .map((node) => ({
+      filePath: node.data!.path,
+      type: node.data!.type,
+    }));
 }; 

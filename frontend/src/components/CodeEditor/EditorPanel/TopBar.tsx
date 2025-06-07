@@ -27,7 +27,7 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
   return (
     <div className="h-14 bg-background border-b border-border flex items-center justify-between px-4 py-2">
       <div className="flex items-center space-x-2">
-        <Link to="/" className="flex items-center">
+        <Link to="/" className="flex items-center mr-6">
           <img src="/logo.png" alt="Code Editor" width={45} height={45} />
           <div className="text-foreground font-semibold text-xl ml-2">ApeironDev</div>
         </Link>
@@ -44,8 +44,8 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
         </SignedIn>
       </div>
       
-      <div className="flex items-center space-x-2 sm:space-x-3">
-        <div className="flex items-center space-x-1">
+      <div className="flex items-center space-x-2 sm:space-x-4">
+        <div className="flex items-center space-x-2">
           <SignedOut>
             <SignInButton mode="modal">
               <Button variant="ghost" size="sm" className="text-foreground hover:text-foreground/80 px-2">
@@ -59,7 +59,11 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
             </SignUpButton>
           </SignedOut>
           <SignedIn>
-            <UserButton afterSignOutUrl="/" />
+            <UserButton appearance={{
+              elements: {
+                avatarBox: "w-8 h-8",
+              },
+            }} />
           </SignedIn>
         </div>
 
@@ -67,16 +71,16 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
           onClick={triggerExecution}
           disabled={isExecuting}
           size="sm"
-          className="bg-success hover:bg-success/90 text-success-foreground"
+          className={`m-2 ${!isExecuting ? "bg-success hover:bg-success/90 text-success-foreground" : "bg-destructive/70 hover:bg-destructive/90 text-destructive-foreground"}`}
         >
           {isExecuting ? (
             <>
-              <Square className="w-4 h-4 mr-2 bg-red-500" />
+              <Square className="w-4 h-4 fill-current text-red-500" />
               Running...
             </>
           ) : (
             <>
-              <Play className="w-4 h-4 mr-2 fill-current" />
+              <Play className="w-4 h-4 fill-current" />
               Run
             </>
           )}
