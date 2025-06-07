@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -15,8 +14,8 @@ import (
 	cloudtaskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
@@ -190,8 +189,10 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 			currentAction.R2ObjectKey = r2ObjectKey // Set it for the response action
 
 			if clientFile.Action == "new" || !foundServerMeta || (clientFile.Action == "modified" && clientFile.ClientHash != serverHash) {
-				if clientFile.Action == "new" || r2ObjectKey == "" { // Ensure a unique R2 key for new files or if not found
-					currentAction.R2ObjectKey = fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceID, uuid.New().String(), filepath.Base(clientFile.FilePath))
+				if clientFile.Action == "new" || r2ObjectKey == "" {
+					// For new or modified files, the R2 object key is directly derived from its logical file path.
+					// This preserves the folder structure in R2.
+					currentAction.R2ObjectKey = fmt.Sprintf("workspaces/%s/%s", workspaceID, clientFile.FilePath)
 				}
 
 				presignedPutURL, presignErr := ac.R2PresignClient.PresignPutObject(ctx, &s3.PutObjectInput{
@@ -225,7 +226,7 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 				var serverMeta FileMetadata
 				if err := docs[0].DataTo(&serverMeta); err == nil {
 					currentAction.R2ObjectKey = serverMeta.R2ObjectKey
-				currentAction.ActionRequired = "delete"
+					currentAction.ActionRequired = "delete"
 					itemLogCtx.Info("Marked for deletion. Server will delete on confirm.")
 				} else {
 					itemLogCtx.WithError(err).Error("Error unmarshalling Firestore data for file to delete.")
@@ -321,213 +322,182 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 	workspaceID := c.Param("workspaceId")
 	userID := c.GetString("userID")
 
+	ctx := c.Request.Context()
 	logCtx := log.WithFields(log.Fields{
 		"workspace_id": workspaceID,
 		"user_id":      userID,
 		"handler":      "ConfirmSync",
 	})
 
-	isMember, err := checkWorkspaceMembership(c.Request.Context(), ac.FirestoreClient, userID, workspaceID)
+	isMember, err := checkWorkspaceMembership(ctx, ac.FirestoreClient, userID, workspaceID)
 	if err != nil {
-		logCtx.WithError(err).Error("Workspace membership check failed.")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify workspace membership"})
 		return
 	}
 	if !isMember {
-		logCtx.Warn("User forbidden from accessing workspace.")
 		c.JSON(http.StatusForbidden, gin.H{"error": "User does not have access to this workspace"})
 		return
 	}
-	logCtx.Info("User authorized for workspace access.")
 
-	var req ConfirmSyncRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		logCtx.WithError(err).Warn("Invalid request body for ConfirmSync")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	form, err := c.MultipartForm()
+	if err != nil {
+		logCtx.WithError(err).Warn("Failed to parse multipart form.")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid form data: " + err.Error()})
+		return
+	}
+	defer form.RemoveAll()
+
+	metadataJSON := c.Request.FormValue("metadata")
+	var metadataReq ConfirmSyncRequest
+	if err := json.Unmarshal([]byte(metadataJSON), &metadataReq); err != nil {
+		logCtx.WithError(err).Warn("Failed to unmarshal sync metadata.")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sync metadata: " + err.Error()})
 		return
 	}
 
-	finalVersionToCommit := req.NewWorkspaceVersion
+	fileMetadatas := make(map[string]FileMetadata)
+	for _, file := range metadataReq.Actions {
+		if file.ActionConfirmed == "upload" {
+			originalFilename := file.FilePath
+			fileID := uuid.New().String()
+			sanitizedFilePath := filepath.Clean(file.FilePath)
+			r2ObjectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceID, fileID, sanitizedFilePath)
 
-	results := make([]ConfirmSyncResponseItem, 0, len(req.Actions))
-	var overallErrorMessage string
+			fileMetadatas[originalFilename] = FileMetadata{
+				FileID:      fileID,
+				FilePath:    file.FilePath,
+				R2ObjectKey: r2ObjectKey,
+				Hash:        file.ClientHash,
+				Size:        file.Size,
+				ContentType: file.ContentType,
+				WorkspaceID: workspaceID,
+				UserID:      userID,
+			}
+			logCtx.Infof("Prepared metadata for '%s' with R2 key '%s'", originalFilename, r2ObjectKey)
+		}
+	}
 
-	err = ac.FirestoreClient.RunTransaction(c.Request.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
-		wsRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
-		wsDoc, err := tx.Get(wsRef)
+	err = ac.FirestoreClient.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		wsDocRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
+		wsDocSnap, err := tx.Get(wsDocRef)
 		if err != nil {
-			logCtx.WithError(err).Error("Transaction: Failed to get workspace document for version check.")
-			return fmt.Errorf("could not retrieve workspace for confirmation: %w", err)
+			return fmt.Errorf("failed to get workspace for version increment: %w", err)
+		}
+		
+		currentVersionStr := "0"
+		if version, err := wsDocSnap.DataAt("workspace_version"); err == nil {
+			if v, ok := version.(string); ok {
+				currentVersionStr = v
+			}
 		}
 
-		var workspaceData Workspace
-		if err := wsDoc.DataTo(&workspaceData); err != nil {
-			logCtx.WithError(err).Error("Transaction: Failed to parse workspace data.")
-			return fmt.Errorf("could not parse workspace data: %w", err)
+		if currentVersionStr != metadataReq.BaseVersion {
+			return fmt.Errorf("transaction version conflict: client base version %s does not match server version %s", metadataReq.BaseVersion, currentVersionStr)
 		}
 
-		if workspaceData.WorkspaceVersion != req.BaseVersion {
-			logCtx.Warnf("Transaction: Aborting due to version conflict. Client base: %s, Server current: %s", req.BaseVersion, workspaceData.WorkspaceVersion)
-			return fmt.Errorf("workspace_conflict")
+		newVersion, _ := strconv.Atoi(currentVersionStr)
+		newVersion++
+		newVersionStr := strconv.Itoa(newVersion)
+
+		err = tx.Update(wsDocRef, []firestore.Update{
+			{Path: "workspace_version", Value: newVersionStr},
+			{Path: "updated_at", Value: time.Now().UTC()},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to increment workspace version: %w", err)
 		}
 
 		filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
-		var transactionError error
 
-		for _, fileConfirm := range req.Actions {
-			itemLogCtx := logCtx.WithField("filePath", fileConfirm.FilePath)
-			responseItem := ConfirmSyncResponseItem{FilePath: fileConfirm.FilePath}
-
-			if fileConfirm.Status != "success" {
-				itemLogCtx.WithField("client_error", fileConfirm.Error).Warn("Client reported failed operation for file.")
-				responseItem.Status = "confirmation_skipped_client_failure"
-				responseItem.Message = fmt.Sprintf("Client reported operation failed: %s", fileConfirm.Error)
-				results = append(results, responseItem)
+		for _, formFileHeader := range form.File["files"] {
+			originalFilename := formFileHeader.Filename
+			fileMetadata, ok := fileMetadatas[originalFilename]
+			if !ok {
+				logCtx.Warnf("Skipping file '%s' as no corresponding metadata was found.", originalFilename)
 				continue
 			}
 
-			var existingDocRef *firestore.DocumentRef
-			var existingMetaData FileMetadata
-			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", fileConfirm.FilePath).Limit(1)
-
-			docs, qErr := tx.Documents(query).GetAll()
-			if qErr != nil {
-				itemLogCtx.WithError(qErr).Error("Transaction: Firestore query failed for file metadata.")
-				responseItem.Status = "confirmation_failed_server_error"
-				responseItem.Message = "Server error querying file metadata."
-				results = append(results, responseItem)
-				transactionError = qErr
-				break
+			formFile, err := formFileHeader.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open file %s from form: %w", originalFilename, err)
 			}
+			defer formFile.Close()
+
+			uploader := manager.NewUploader(ac.R2S3Client)
+			_, err = uploader.Upload(ctx, &s3.PutObjectInput{
+				Bucket:      aws.String(ac.R2BucketName),
+				Key:         aws.String(fileMetadata.R2ObjectKey),
+				Body:        formFile,
+				ContentType: aws.String(fileMetadata.ContentType),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to upload %s to R2: %w", originalFilename, err)
+			}
+			
+			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", fileMetadata.FilePath).Limit(1)
+			docs, err := tx.Documents(query).GetAll()
+			if err != nil {
+				return fmt.Errorf("failed to query existing file for modification %s: %w", fileMetadata.FilePath, err)
+			}
+			
 			if len(docs) > 0 {
-				existingDocRef = docs[0].Ref
-				if errData := docs[0].DataTo(&existingMetaData); errData != nil {
-					itemLogCtx.WithError(errData).Warn("Failed to parse existing metadata, CreatedAt might be reset.")
-				}
+				fileDocRef := docs[0].Ref
+				err = tx.Set(fileDocRef, fileMetadata)
+			} else {
+				fileDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(fileMetadata.FileID)
+				err = tx.Set(fileDocRef, fileMetadata)
 			}
-
-			switch fileConfirm.ActionConfirmed {
-			case "uploaded":
-				if fileConfirm.ClientHash == "" {
-					itemLogCtx.Warn("Missing clientHash for uploaded file confirmation.")
-					responseItem.Status = "confirmation_failed_missing_data"
-					responseItem.Message = "Missing essential data (hash) for uploaded file."
-					transactionError = fmt.Errorf("missing data for uploaded file %s", fileConfirm.FilePath)
-					break
-				}
-				fileMetadata := FileMetadata{
-					FileName:    filepath.Base(fileConfirm.FilePath),
-					FilePath:    fileConfirm.FilePath,
-					R2ObjectKey: fileConfirm.R2ObjectKey,
-					Size:        fileConfirm.Size,
-					ContentType: fileConfirm.ContentType,
-					UserID:      userID,
-					WorkspaceID: workspaceID,
-					Hash:        fileConfirm.ClientHash,
-					UpdatedAt:   time.Now().UTC(),
-				}
-				var firestoreErr error
-				if existingDocRef != nil {
-					fileMetadata.CreatedAt = existingMetaData.CreatedAt
-					if fileMetadata.CreatedAt.IsZero() {
-						fileMetadata.CreatedAt = time.Now().UTC()
-					}
-					firestoreErr = tx.Set(existingDocRef, fileMetadata)
-					responseItem.FileID = existingDocRef.ID
-				} else {
-					newFileID := uuid.New().String()
-					fileMetadata.FileID = newFileID
-					fileMetadata.CreatedAt = time.Now().UTC()
-					newDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(newFileID)
-					firestoreErr = tx.Set(newDocRef, fileMetadata)
-					responseItem.FileID = newFileID
-				}
-				if firestoreErr != nil {
-					itemLogCtx.WithError(firestoreErr).Error("Transaction: Failed to set file metadata in Firestore.")
-					responseItem.Status = "confirmation_failed_firestore_error"
-					responseItem.Message = "Failed to update/create file metadata."
-					transactionError = firestoreErr
-				} else {
-					responseItem.Status = "metadata_updated_or_created"
-				}
-
-			case "deleted":
-				if fileConfirm.R2ObjectKey == "" {
-					itemLogCtx.Warn("Missing R2ObjectKey for deleted file confirmation.")
-				}
-
-				if existingDocRef != nil {
-					if fileConfirm.R2ObjectKey != "" {
-						_, r2Err := ac.R2S3Client.DeleteObject(c.Request.Context(), &s3.DeleteObjectInput{
-							Bucket: aws.String(ac.R2BucketName),
-							Key:    aws.String(fileConfirm.R2ObjectKey),
-						})
-						if r2Err != nil {
-							var nsk *types.NoSuchKey
-							if errors.As(r2Err, &nsk) {
-								itemLogCtx.Warnf("R2 object %s not found for deletion, already deleted?", fileConfirm.R2ObjectKey)
-								responseItem.Status = "r2_object_not_found_assumed_deleted"
-							} else {
-								itemLogCtx.WithError(r2Err).Errorf("Failed to delete object %s from R2.", fileConfirm.R2ObjectKey)
-								responseItem.Status = "confirmation_failed_r2_delete"
-								responseItem.Message = "Server failed to delete file from storage: " + r2Err.Error()
-								transactionError = r2Err
-								break
-							}
-						}
-					}
-					fsErr := tx.Delete(existingDocRef)
-					if fsErr != nil {
-						itemLogCtx.WithError(fsErr).Error("Transaction: Failed to delete file metadata.")
-						responseItem.Status = "confirmation_failed_firestore_delete"
-						responseItem.Message = "Failed to delete file metadata."
-						transactionError = fsErr
-					} else {
-						responseItem.Status = "metadata_deleted"
-					}
-				} else {
-					itemLogCtx.Warn("File metadata not found for deletion, assuming already deleted.")
-					responseItem.Status = "metadata_not_found_assumed_deleted"
-				}
+			if err != nil {
+				return fmt.Errorf("failed to set file metadata for %s in transaction: %w", originalFilename, err)
 			}
-			results = append(results, responseItem)
-			if transactionError != nil {
-				break
+			logCtx.Infof("Successfully uploaded '%s' to R2 and set metadata in Firestore.", originalFilename)
+		}
+
+		for _, action := range metadataReq.Actions {
+			if action.ActionConfirmed == "delete" {
+				_, err := ac.R2S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+					Bucket: aws.String(ac.R2BucketName),
+					Key:    aws.String(action.R2ObjectKey),
+				})
+				if err != nil {
+					logCtx.WithError(err).Warnf("Failed to delete object '%s' from R2.", action.R2ObjectKey)
+				}
+
+				query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", action.FilePath).Limit(1)
+				docs, err := tx.Documents(query).GetAll()
+				if err != nil {
+					logCtx.WithError(err).Warnf("Failed to query for file to delete: %s", action.FilePath)
+					continue
+				}
+				for _, doc := range docs {
+					err = tx.Delete(doc.Ref)
+					if err != nil {
+						return fmt.Errorf("failed to delete firestore doc for %s: %w", action.FilePath, err)
+					}
+				}
 			}
 		}
 
-		if transactionError != nil {
-			overallErrorMessage = transactionError.Error()
-			return transactionError
-		}
-
-		return tx.Update(wsRef, []firestore.Update{
-			{Path: "workspace_version", Value: finalVersionToCommit},
-		})
+		return nil
 	})
 
 	if err != nil {
-		logCtx.WithError(err).Error("ConfirmSync transaction failed.")
-		if strings.Contains(err.Error(), "workspace_conflict") {
-			c.JSON(http.StatusConflict, ConfirmSyncResponse{
-				Status:       "error",
-				ErrorMessage: "Workspace was updated by another session. Please refresh and try again.",
-			})
-		} else {
-			c.JSON(http.StatusInternalServerError, ConfirmSyncResponse{
-				Status:       "error",
-				Results:      results,
-				ErrorMessage: "A server error occurred during final confirmation: " + overallErrorMessage,
-			})
-		}
+		logCtx.WithError(err).Error("Transaction failed in ConfirmSync.")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to confirm sync: " + err.Error()})
 		return
 	}
 
-	logCtx.WithField("final_version", finalVersionToCommit).Info("ConfirmSync successful.")
+	wsDoc, err := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID).Get(ctx)
+	if err != nil {
+		logCtx.WithError(err).Error("Failed to fetch final workspace version after sync.")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to confirm final workspace version."})
+		return
+	}
+	finalVersion := wsDoc.Data()["workspace_version"].(string)
+
 	c.JSON(http.StatusOK, ConfirmSyncResponse{
 		Status:                "success",
-		Results:               results,
-		FinalWorkspaceVersion: finalVersionToCommit,
+		FinalWorkspaceVersion: finalVersion,
 	})
 }
 
@@ -869,100 +839,69 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	workspaceID := c.Param("workspaceId")
 	userID := c.GetString("userID")
 
-	if userID == "" {
-		log.Error("UserID not found in context for ExecuteCodeAuthenticated")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
-		return
-	}
-
-	logCtx := log.WithFields(log.Fields{
-		"workspace_id": workspaceID,
-		"user_id":      userID,
-		"handler":      "ExecuteCodeAuthenticated",
-	})
+	logCtx := log.WithFields(log.Fields{"workspace_id": workspaceID, "user_id": userID, "handler": "ExecuteCodeAuthenticated"})
 
 	isMember, err := checkWorkspaceMembership(c.Request.Context(), ac.FirestoreClient, userID, workspaceID)
 	if err != nil {
-		logCtx.WithError(err).Error("Workspace membership check failed.")
+		logCtx.WithError(err).Error("Workspace membership check failed during authenticated execution.")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify workspace membership"})
 		return
 	}
 	if !isMember {
-		logCtx.Warn("User forbidden from executing code in workspace.")
-		c.JSON(http.StatusForbidden, gin.H{"error": "User does not have access to execute code in this workspace"})
+		logCtx.Warn("User tried to execute code in a workspace they are not a member of.")
+		c.JSON(http.StatusForbidden, gin.H{"error": "User does not have access to this workspace"})
 		return
 	}
-	logCtx.Info("User authorized for workspace code execution.")
 
 	var req ExecuteAuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logCtx.WithError(err).Warn("Invalid request body for authenticated execution.")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
 		return
 	}
 
-	if req.Language != "python" {
-		log.WithFields(log.Fields{
-			"language":     req.Language,
-			"workspace_id": workspaceID,
-			"user_id":      userID,
-		}).Warn("Unsupported language for authenticated execution")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported language, only 'python' is supported for authenticated execution"})
+	entrypointFile := filepath.Clean(req.EntrypointFile)
+	if entrypointFile == "." || strings.HasPrefix(entrypointFile, "..") {
+		logCtx.Warnf("Invalid entrypoint path received: %s", req.EntrypointFile)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid entrypoint file path."})
 		return
 	}
 
 	jobID := uuid.New().String()
-	ctx := c.Request.Context()
+	logCtx = logCtx.WithField("job_id", jobID)
 
-	submittedAt := time.Now().UTC()
-	expiresAt := submittedAt.Add(15 * 24 * time.Hour)
-
-	job := Job{
+	jobDocRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
+	if _, err := jobDocRef.Set(c.Request.Context(), Job{
 		Status:         "queued",
 		Language:       req.Language,
 		Input:          req.Input,
-		SubmittedAt:    submittedAt,
-		ExpiresAt:      expiresAt,
+		SubmittedAt:    time.Now().UTC(),
 		UserID:         userID,
 		WorkspaceID:    workspaceID,
-		EntrypointFile: req.EntrypointFile,
+		EntrypointFile: entrypointFile,
 		ExecutionType:  "authenticated_r2",
-	}
-
-	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
-	if _, err := docRef.Set(ctx, job); err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"job_id":       jobID,
-			"workspace_id": workspaceID,
-		}).Error("Failed to create authenticated job in Firestore")
+	}); err != nil {
+		logCtx.WithError(err).Error("Failed to create authenticated job in Firestore")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
 		return
 	}
-	log.WithFields(log.Fields{
-		"job_id":       jobID,
-		"language":     job.Language,
-		"workspace_id": workspaceID,
-		"entrypoint":   req.EntrypointFile,
-	}).Info("Authenticated job queued in Firestore")
+	logCtx.Info("Authenticated job created in Firestore.")
 
-	taskAuthPayload := CloudTaskAuthPayload{
-		JobID:          jobID,
+	taskPayload := CloudTaskAuthPayload{
 		WorkspaceID:    workspaceID,
-		EntrypointFile: req.EntrypointFile,
+		EntrypointFile: entrypointFile,
 		Language:       req.Language,
 		Input:          req.Input,
 		R2BucketName:   ac.R2BucketName,
+		JobID:          jobID,
 	}
-	payloadBytes, err := json.Marshal(taskAuthPayload)
+
+	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"job_id":       jobID,
-			"workspace_id": workspaceID,
-		}).Error("Failed to marshal task payload for authenticated execution")
+		logCtx.WithError(err).Error("Failed to marshal task payload for authenticated execution")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare job for execution"})
 		return
 	}
-
-	workerTargetURL := fmt.Sprintf("%s/execute_auth", ac.PythonWorkerURL)
 
 	taskReq := &cloudtaskspb.CreateTaskRequest{
 		Parent: ac.CloudTasksQueuePath,
@@ -970,36 +909,36 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 			MessageType: &cloudtaskspb.Task_HttpRequest{
 				HttpRequest: &cloudtaskspb.HttpRequest{
 					HttpMethod: cloudtaskspb.HttpMethod_POST,
-					Url:        workerTargetURL,
+					Url:        ac.PythonWorkerURL + "/execute_auth",
 					Headers:    map[string]string{"Content-Type": "application/json"},
 					Body:       payloadBytes,
 					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
 						OidcToken: &cloudtaskspb.OidcToken{
 							ServiceAccountEmail: ac.WorkerSAEmail,
+							Audience:            ac.PythonWorkerURL,
 						},
 					},
 				},
 			},
-			DispatchDeadline: durationpb.New(10 * time.Minute),
-			ScheduleTime:     timestamppb.New(time.Now().UTC().Add(1 * time.Second)),
+			DispatchDeadline: &durationpb.Duration{Seconds: 1800},
 		},
 	}
 
-	createdTask, err := ac.TasksClient.CreateTask(ctx, taskReq)
+	createdTask, err := ac.TasksClient.CreateTask(c.Request.Context(), taskReq)
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"job_id":       jobID,
-			"workspace_id": workspaceID,
-		}).Error("Failed to create Cloud Task for authenticated execution")
+		logCtx.WithError(err).Error("Failed to create Cloud Task for authenticated execution")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit job for execution"})
 		return
 	}
 
-	log.WithFields(log.Fields{
+	logCtx.WithFields(log.Fields{
 		"job_id":       jobID,
 		"task_name":    createdTask.GetName(),
-		"workspace_id": workspaceID,
-		"worker_url":   workerTargetURL,
-	}).Info("Authenticated job enqueued to Cloud Tasks")
-	c.JSON(http.StatusOK, gin.H{"job_id": jobID})
+		"entrypoint":   req.EntrypointFile,
+	}).Info("Cloud Task created successfully for authenticated execution.")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Authenticated code execution job created successfully.",
+		"job_id":  jobID,
+	})
 } 

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import tempfile # Added for TemporaryDirectory
+import re
 
 from fastapi import APIRouter, HTTPException # Using APIRouter for modularity
 from google.cloud import firestore as google_firestore # For type hinting
@@ -194,8 +195,13 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
                 if s3_key == r2_prefix or (s3_obj.get('Size', 0) == 0 and s3_key.endswith('/')):
                      logger.info(f"Job {job_id}:   Skipping directory or empty object.")
                      continue
-                relative_path = s3_key[len(r2_prefix):]
-                if not relative_path: continue # Should not happen if previous check is robust
+                
+                path_from_workspace_root = s3_key[len(r2_prefix):]
+                # Strips the `files/<uuid>/` prefix from R2 file paths to get the correct relative path.
+                relative_path = re.sub(r'^files/[0-9a-fA-F\-]+/', '', path_from_workspace_root)
+                
+                if not relative_path: continue
+
                 local_file = workspace_exec_dir / relative_path
                 local_file.parent.mkdir(parents=True, exist_ok=True) # Create subdirectories if they don't exist
                 logger.info(f"Job {job_id}:   Downloading to '{local_file}'")
