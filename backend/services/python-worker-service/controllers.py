@@ -47,9 +47,9 @@ def _execute_python_code_direct(job_id: str, code: str, input_data: str | None) 
 
 def _execute_python_script_in_dir(job_id: str, script_path: Path, exec_dir: Path, input_data: str | None) -> tuple[str | None, str | None, int]:
     try:
-        script_file_name = script_path.name
+        logger.info(f"Job {job_id}: Executing 'python3 {str(script_path)}' in '{exec_dir}'")
         process = subprocess.run(
-            ['python3', script_file_name],
+            ['python3', str(script_path)],
             text=True, 
             timeout=DEFAULT_EXECUTION_TIMEOUT_SEC, 
             capture_output=True,
@@ -212,7 +212,6 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
             # Update Firestore status before running the code
             _update_firestore_job_status(job_id, job_doc_ref, {"status": "running_auth_workspace", "updated_at": datetime.now(timezone.utc)}, "running code")
             
-            logger.info(f"Job {job_id}: Executing 'python3 {payload.entrypoint_file}' in '{workspace_exec_dir}'")
             # Execute the Python script from the temporary directory
             output, error_details, exec_status_code = _execute_python_script_in_dir(
                 job_id, Path(payload.entrypoint_file), workspace_exec_dir, payload.input 
