@@ -351,11 +351,11 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		return
 	}
 
-	// This list will hold R2 keys that should be deleted AFTER the transaction succeeds.
 	var r2KeysToDelete []string
 
 	err = ac.FirestoreClient.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// --- READ PHASE ---
+		// 1. Read workspace document for version check.
 		wsDocRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
 		wsDocSnap, err := tx.Get(wsDocRef)
 		if err != nil {
@@ -367,6 +367,24 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 			return fmt.Errorf("failed to parse workspace data: %w", err)
 		}
 
+		// 2. Read all file documents that will be modified or deleted.
+		filesCollectionRef := ac.FirestoreClient.Collection(fmt.Sprintf("workspaces/%s/files", workspaceID))
+		existingFileDocs := make(map[string]*firestore.DocumentSnapshot)
+		for _, clientFile := range req.SyncActions {
+			fileDocRef := filesCollectionRef.Doc(SanitizePathToDocID(clientFile.FilePath))
+			docSnap, err := tx.Get(fileDocRef)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					// This is fine for new files, so we just note it doesn't exist.
+					existingFileDocs[clientFile.FilePath] = nil
+					continue
+				}
+				// Any other error is a problem.
+				return fmt.Errorf("failed to get file doc '%s': %w", clientFile.FilePath, err)
+			}
+			existingFileDocs[clientFile.FilePath] = docSnap
+		}
+		
 		// --- VALIDATION PHASE ---
 		baseVersionInt, err := strconv.Atoi(workspaceData.WorkspaceVersion)
 		if err != nil {
@@ -377,35 +395,12 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 			return fmt.Errorf("client workspace version '%s' is invalid", req.WorkspaceVersion)
 		}
 
-		// Optimistic Concurrency Control Check
 		if clientVersionInt != baseVersionInt+1 {
 			return fmt.Errorf("workspace version mismatch: server is at %d, but client commit is for %d", baseVersionInt, clientVersionInt-1)
 		}
 
-		// --- PREPARE WRITES / DELETES ---
-		filesCollectionRef := ac.FirestoreClient.Collection(fmt.Sprintf("workspaces/%s/files", workspaceID))
-		for _, clientFile := range req.SyncActions {
-			switch clientFile.Action {
-			case "delete":
-				// For deletes, we need to read the existing doc to get the R2 key for later deletion.
-				query := filesCollectionRef.Where("file_path", "==", clientFile.FilePath).Limit(1)
-				docs, err := tx.Documents(query).GetAll()
-				if err != nil {
-					return fmt.Errorf("failed to query for file to delete '%s': %w", clientFile.FilePath, err)
-				}
-				if len(docs) > 0 {
-					var fileMeta FileMetadata
-					if err := docs[0].DataTo(&fileMeta); err == nil {
-						if fileMeta.R2ObjectKey != "" {
-							r2KeysToDelete = append(r2KeysToDelete, fileMeta.R2ObjectKey)
-						}
-					}
-				}
-			}
-		}
-
 		// --- WRITE PHASE ---
-		// 1. Update workspace version and timestamp.
+		// 1. Update workspace version and timestamp. This is the first write.
 		err = tx.Update(wsDocRef, []firestore.Update{
 			{Path: "workspace_version", Value: req.WorkspaceVersion},
 			{Path: "updated_at", Value: time.Now().UTC()},
@@ -417,10 +412,10 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		// 2. Perform file metadata writes and deletes.
 		for _, clientFile := range req.SyncActions {
 			fileDocRef := filesCollectionRef.Doc(SanitizePathToDocID(clientFile.FilePath))
+			itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath).WithField("action", clientFile.Action)
 
 			switch clientFile.Action {
 			case "upsert":
-				itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath).WithField("action", clientFile.Action)
 				newMeta := FileMetadata{
 					FileID:      clientFile.FileID,
 					FilePath:    clientFile.FilePath,
@@ -430,18 +425,13 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 					UpdatedAt:   time.Now().UTC(),
 				}
 
-				// Check if document exists to preserve created_at timestamp
-				docSnap, err := tx.Get(fileDocRef)
-				if err != nil && !strings.Contains(err.Error(), "not found") {
-					return fmt.Errorf("failed to get existing doc for upsert: %w", err)
-				}
-				
+				docSnap := existingFileDocs[clientFile.FilePath]
 				if docSnap != nil && docSnap.Exists() {
 					var existingMeta FileMetadata
 					docSnap.DataTo(&existingMeta)
-					newMeta.CreatedAt = existingMeta.CreatedAt
+					newMeta.CreatedAt = existingMeta.CreatedAt // Preserve original creation time
 				} else {
-					newMeta.CreatedAt = newMeta.UpdatedAt
+					newMeta.CreatedAt = newMeta.UpdatedAt // It's a new file
 				}
 
 				itemLogCtx.WithFields(log.Fields{
@@ -453,11 +443,20 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 				}
 
 			case "delete":
-				itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath).WithField("action", clientFile.Action)
-				itemLogCtx.Info("Deleting file metadata from Firestore.")
-				if err := tx.Delete(fileDocRef); err != nil {
-					if !strings.Contains(err.Error(), "not found"){
-						itemLogCtx.WithError(err).Warn("Failed to delete file metadata, might have been deleted already or never existed.")
+				docSnap := existingFileDocs[clientFile.FilePath]
+				if docSnap != nil && docSnap.Exists() {
+					var fileMeta FileMetadata
+					if err := docSnap.DataTo(&fileMeta); err == nil {
+						if fileMeta.R2ObjectKey != "" {
+							r2KeysToDelete = append(r2KeysToDelete, fileMeta.R2ObjectKey)
+						}
+					}
+					itemLogCtx.Info("Deleting file metadata from Firestore.")
+					if err := tx.Delete(fileDocRef); err != nil {
+						// This check is for robustness, but Get should have caught "not found".
+						if !strings.Contains(err.Error(), "not found") {
+							return fmt.Errorf("failed to delete file metadata: %w", err)
+						}
 					}
 				}
 			}
