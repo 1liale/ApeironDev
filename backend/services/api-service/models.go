@@ -19,6 +19,7 @@ type Workspace struct {
 	Name             string    `json:"name" firestore:"name"`
 	CreatedBy        string    `json:"createdBy" firestore:"created_by"`
 	CreatedAt        time.Time `json:"createdAt" firestore:"created_at"`
+	UpdatedAt        time.Time `json:"updatedAt,omitempty" firestore:"updated_at,omitempty"`
 	WorkspaceVersion string    `json:"workspaceVersion,omitempty" firestore:"workspace_version,omitempty"` // Added for OCC
 }
 
@@ -54,22 +55,18 @@ type WorkspaceMembership struct {
 	JoinedAt     time.Time `json:"joinedAt" firestore:"joined_at"`
 }
 
-// --- Structs for File Manifest --- 
+// --- Structs for File Manifest ---
 
 // FileMetadata represents the metadata for a single file within a workspace.
 type FileMetadata struct {
-	FileID        string    `json:"-" firestore:"file_id"`
-	FileName      string    `json:"-" firestore:"file_name"`
+	FileID        string    `json:"fileId" firestore:"file_id"`
 	FilePath      string    `json:"filePath" firestore:"file_path"`
 	R2ObjectKey   string    `json:"r2ObjectKey" firestore:"r2_object_key"`
 	Size          int64     `json:"size,omitempty" firestore:"size,omitempty"`
-	ContentType   string    `json:"contentType,omitempty" firestore:"content_type,omitempty"`
-	UserID        string    `json:"-" firestore:"user_id"`
-	WorkspaceID   string    `json:"-" firestore:"workspace_id"`
 	Hash          string    `json:"hash,omitempty" firestore:"hash,omitempty"`
-	CreatedAt     time.Time `json:"-" firestore:"created_at"`
-	UpdatedAt     time.Time `json:"-" firestore:"updated_at"`
-	ContentURL    string    `json:"contentUrl,omitempty" firestore:"-"` // Renamed from DownloadURL
+	CreatedAt     time.Time `json:"createdAt" firestore:"created_at"`
+	UpdatedAt     time.Time `json:"updatedAt" firestore:"updated_at"`
+	ContentURL    string    `json:"contentUrl,omitempty" firestore:"-"` 
 }
 
 // WorkspaceManifestResponse is the response for GET /workspaces/:workspaceId/manifest
@@ -84,71 +81,59 @@ type WorkspaceManifestResponse struct {
 type SyncFileClientState struct {
 	FilePath   string `json:"filePath" binding:"required"`
 	ClientHash string `json:"clientHash,omitempty"`
-	Action     string `json:"action" binding:"required"`
+	Action     string `json:"action" binding:"required"` // "new", "modified", "deleted", "unchanged"
 }
 
 // SyncRequest is the request body for POST /api/sync/:workspaceId.
 type SyncRequest struct {
-	WorkspaceVersion string                `json:"workspaceVersion" binding:"required"` // Added client's current workspace version
+	WorkspaceVersion string                `json:"workspaceVersion" binding:"required"`
 	Files            []SyncFileClientState `json:"files" binding:"required"`
 }
 
 // SyncResponseFileAction represents an action the client needs to take for a file.
 type SyncResponseFileAction struct {
 	FilePath       string `json:"filePath"`
+	FileID         string `json:"fileId,omitempty"`
 	R2ObjectKey    string `json:"r2ObjectKey"`
-	ActionRequired string `json:"actionRequired"` // e.g., "upload", "delete", "none", "conflict"
+	ActionRequired string `json:"actionRequired"` // "upload", "delete", "none"
 	PresignedURL   string `json:"presignedUrl,omitempty"`
 	Message        string `json:"message,omitempty"`
-	ServerVersion  string `json:"serverVersion,omitempty"` // For conflict resolution
 }
 
 // SyncResponse is the response body from POST /api/sync/:workspaceId.
 type SyncResponse struct {
 	Status              string                   `json:"status"` // "pending_confirmation", "workspace_conflict", "no_changes", "error"
 	Actions             []SyncResponseFileAction `json:"actions"`
-	NewWorkspaceVersion string                   `json:"newWorkspaceVersion,omitempty"` // Tentative new version
+	NewWorkspaceVersion string                   `json:"newWorkspaceVersion,omitempty"`
 	ErrorMessage        string                   `json:"errorMessage,omitempty"`
 }
 
 // --- Structs for Confirm Sync Endpoint (/workspaces/:workspaceId/sync/confirm) ---
 
-// ConfirmSyncFileItem represents the client-reported status of a single file operation.
-type ConfirmSyncFileItem struct {
-	FilePath        string `json:"filePath" binding:"required"`
-	R2ObjectKey     string `json:"r2ObjectKey" binding:"required"`
-	ActionConfirmed string `json:"actionConfirmed" binding:"required"`
-	Status          string `json:"status" binding:"required"`
-	ClientHash      string `json:"clientHash,omitempty"`
-	Size            int64  `json:"size,omitempty"`
-	ContentType     string `json:"contentType,omitempty"`
-	Error           string `json:"error,omitempty"`
+// FileAction represents the client-confirmed action for a single file.
+type FileAction struct {
+	FilePath    string `json:"filePath" binding:"required"`
+	FileID      string `json:"fileId" binding:"required"`
+	R2ObjectKey string `json:"r2ObjectKey"` // Key for new object in "upsert", old object in "delete"
+	Action      string `json:"action" binding:"required"` // "upsert", "delete"
+	ClientHash  string `json:"clientHash,omitempty"`      // For "upsert"
+	Size        int64  `json:"size,omitempty"`            // For "upsert"
 }
 
 // ConfirmSyncRequest is the request body for POST /api/sync/:workspaceId/confirm.
 type ConfirmSyncRequest struct {
-	NewWorkspaceVersion string                `json:"newWorkspaceVersion" binding:"required"`
-	BaseVersion         string                `json:"baseVersion" binding:"required"`
-	Actions             []ConfirmSyncFileItem `json:"actions" binding:"required"`
+	WorkspaceVersion string       `json:"workspaceVersion" binding:"required"`
+	SyncActions      []FileAction `json:"syncActions" binding:"required"`
 }
 
-// ConfirmSyncResponseItem details the server-side outcome of confirming a single file operation.
-type ConfirmSyncResponseItem struct {
-	FilePath string `json:"filePath"`
-	Status   string `json:"status"`
-	FileID   string `json:"fileId,omitempty"`
-	Message  string `json:"message,omitempty"`
-}
-
-// ConfirmSyncResponse is the response body for batch confirmation.
+// ConfirmSyncResponse is the response body for the confirmation step.
 type ConfirmSyncResponse struct {
-	Status                string                    `json:"status"` // "success", "partial_failure", "error"
-	Results               []ConfirmSyncResponseItem `json:"results"`
-	FinalWorkspaceVersion string                    `json:"finalWorkspaceVersion,omitempty"` // Final new version
-	ErrorMessage          string                    `json:"errorMessage,omitempty"`
+	Status              string `json:"status"` // "success", "error"
+	FinalWorkspaceVersion string `json:"finalWorkspaceVersion,omitempty"`
+	ErrorMessage        string `json:"errorMessage,omitempty"`
 }
 
-// --- Structs for Authenticated Code Execution --- 
+// --- Structs for Authenticated Code Execution ---
 
 // ExecuteAuthRequest is the request body for the authenticated code execution endpoint.
 type ExecuteAuthRequest struct {
@@ -183,12 +168,19 @@ type CloudTaskPayload struct {
 	Input    string `json:"input"`
 }
 
+// WorkerFile provides the necessary info for the worker to download a file.
+type WorkerFile struct {
+	R2ObjectKey string `json:"r2_object_key"`
+	FilePath    string `json:"file_path"`
+}
+
 // CloudTaskAuthPayload is used for authenticated code execution via Cloud Tasks.
 type CloudTaskAuthPayload struct {
-	JobID          string `json:"job_id"`
-	WorkspaceID    string `json:"workspace_id"`
-	EntrypointFile string `json:"entrypoint_file"`
-	Language       string `json:"language"`
-	Input          string `json:"input,omitempty"`
-	R2BucketName   string `json:"r2_bucket_name"`
+	JobID          string       `json:"job_id"`
+	WorkspaceID    string       `json:"workspace_id"`
+	EntrypointFile string       `json:"entrypoint_file"`
+	Language       string       `json:"language"`
+	Input          string       `json:"input,omitempty"`
+	R2BucketName   string       `json:"r2_bucket_name"`
+	Files          []WorkerFile `json:"files"`
 } 

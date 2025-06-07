@@ -167,44 +167,27 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
             logger.info(f"Job {job_id}: Created temporary execution directory: {workspace_exec_dir}")
             _update_firestore_job_status(job_id, job_doc_ref, {"status": "fetching_from_r2", "updated_at": datetime.now(timezone.utc)}, "fetching code")
 
-            r2_prefix = f"workspaces/{payload.workspace_id}/"
-            objects_list = []
-            continuation_token = None
-            # Paginate through R2 objects in the workspace prefix
-            while True:
-                list_args = {'Bucket': payload.r2_bucket_name, 'Prefix': r2_prefix}
-                if continuation_token: list_args['ContinuationToken'] = continuation_token
-                response = s3_client.list_objects_v2(**list_args)
-                objects_list.extend(response.get('Contents', []))
-                if not response.get('IsTruncated'): break
-                continuation_token = response.get('NextContinuationToken')
-            
-            logger.info(f"Job {job_id}: Found {len(objects_list)} objects in R2 for workspace {payload.workspace_id}.")
-
-            if not objects_list:
-                msg = f"No files found in R2 at {r2_prefix}"
-                final_job_data = _build_final_update_data(3, None, msg, initial_status) 
+            if not payload.files:
+                msg = "No files found in job payload manifest to download."
+                logger.error(f"Job {job_id}: {msg}")
+                final_job_data = _build_final_update_data(3, None, msg, initial_status)
                 _update_firestore_job_status(job_id, job_doc_ref, final_job_data, "final results - no files")
                 return {"job_id": job_id, "message": msg, "final_status": "failed"}
+            
+            logger.info(f"Job {job_id}: Found {len(payload.files)} files in manifest. Starting download from R2.")
 
-            # Download each R2 object to the temporary directory
-            for s3_obj in objects_list:
-                s3_key = s3_obj['Key']
-                logger.info(f"Job {job_id}: - Processing R2 object key: '{s3_key}' (Size: {s3_obj.get('Size', 'N/A')})")
-                # Skip the prefix itself or empty "directory" markers if S3 client lists them
-                if s3_key == r2_prefix or (s3_obj.get('Size', 0) == 0 and s3_key.endswith('/')):
-                     logger.info(f"Job {job_id}:   Skipping directory or empty object.")
-                     continue
+            # Download each file from the manifest provided in the payload
+            for file_to_download in payload.files:
+                s3_key = file_to_download.r2_object_key
+                relative_path = file_to_download.file_path
                 
-                path_from_workspace_root = s3_key[len(r2_prefix):]
-                # Strips the `files/<uuid>/` prefix from R2 file paths to get the correct relative path.
-                relative_path = re.sub(r'^files/[0-9a-fA-F\-]+/', '', path_from_workspace_root)
-                
-                if not relative_path: continue
+                if not s3_key or not relative_path:
+                    logger.warning(f"Job {job_id}: Skipping file in manifest with missing key or path. Key: '{s3_key}', Path: '{relative_path}'")
+                    continue
 
                 local_file = workspace_exec_dir / relative_path
-                local_file.parent.mkdir(parents=True, exist_ok=True) # Create subdirectories if they don't exist
-                logger.info(f"Job {job_id}:   Downloading to '{local_file}'")
+                local_file.parent.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Job {job_id}:   Downloading '{s3_key}' to '{local_file}'")
                 s3_client.download_file(payload.r2_bucket_name, s3_key, str(local_file))
             
             entrypoint_script_local_path = workspace_exec_dir / payload.entrypoint_file.lstrip('/')

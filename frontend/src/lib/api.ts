@@ -12,13 +12,13 @@ import type {
   SyncFileClientStateAPI,
   SyncRequestAPI,
   SyncResponseAPI,
-  ConfirmSyncFileItemAPI,
   ConfirmSyncRequestAPI,
   ConfirmSyncResponseAPI,
   ClientFileState,
   ExecuteAuthRequestBody,
   WorkspaceSummaryItem,
   ExecuteCodeAuthResponse,
+  FileActionAPI,
 } from "@/types/api";
 
 export async function executeCode(
@@ -215,215 +215,159 @@ export async function executeCodeAuth(
   authToken: string,
   filesInEditor: ClientFileState[],
   executionDetails: ExecuteAuthRequestBody,
-  // Parameters to be supplied from WorkspaceContext or similar source
   currentLocalManifestItems: WorkspaceFileManifestItem[],
-  currentLocalWorkspaceVersion: string | number
+  currentLocalWorkspaceVersion: string
 ): Promise<ExecuteCodeAuthResponse> {
   console.log(
-    "Starting executeCodeAuth for workspace:",
-    workspaceId,
-    "with version:",
-    currentLocalWorkspaceVersion
+    `Starting executeCodeAuth for workspace: ${workspaceId} with version: ${currentLocalWorkspaceVersion}`
   );
 
-  let finalWorkspaceVersion: string | number = currentLocalWorkspaceVersion;
-
+  // 1. Determine local changes to create the initial sync request
   const localManifestMap = new Map(
     currentLocalManifestItems.map((item) => [item.filePath, item])
   );
+  const editorFileMap = new Map(
+    filesInEditor.map((file) => [file.filePath, file])
+  );
   const localSyncStates: SyncFileClientStateAPI[] = [];
-  const editorFilePaths = new Set(filesInEditor.map((f) => f.filePath));
 
-  for (const editorFile of filesInEditor) {
-    const currentHash = calculateHash(editorFile.content);
-    const localManifestFile = localManifestMap.get(editorFile.filePath);
-
-    if (!localManifestFile) {
+  // Check for new and modified files
+  for (const file of filesInEditor) {
+    const manifestItem = localManifestMap.get(file.filePath);
+    const currentHash = calculateHash(file.content);
+    if (!manifestItem) {
       localSyncStates.push({
-        filePath: editorFile.filePath,
+        filePath: file.filePath,
         clientHash: currentHash,
         action: "new",
       });
-    } else if (localManifestFile.hash !== currentHash) {
+    } else if (manifestItem.hash !== currentHash) {
       localSyncStates.push({
-        filePath: editorFile.filePath,
+        filePath: file.filePath,
         clientHash: currentHash,
         action: "modified",
-      });
-    } else {
-      localSyncStates.push({
-        filePath: editorFile.filePath,
-        clientHash: currentHash,
-        action: "unchanged",
       });
     }
   }
 
-  for (const localManifestFile of currentLocalManifestItems) {
-    if (!editorFilePaths.has(localManifestFile.filePath)) {
+  // Check for deleted files
+  for (const manifestItem of currentLocalManifestItems) {
+    if (!editorFileMap.has(manifestItem.filePath)) {
       localSyncStates.push({
-        filePath: localManifestFile.filePath,
-        clientHash: localManifestFile.hash || "",
+        filePath: manifestItem.filePath,
         action: "deleted",
       });
     }
   }
-  console.log(
-    "Prepared syncFileClientStates based on local manifest:",
-    localSyncStates
-  );
 
-  const syncRequestPayload: SyncRequestAPI = {
-    workspaceVersion: currentLocalWorkspaceVersion,
-    files: localSyncStates,
-  };
-
-  const syncResult = await syncWorkspace(
-    workspaceId,
-    syncRequestPayload,
-    authToken
-  );
-  console.log("Sync API Result:", syncResult);
-
-  if (syncResult.status === "workspace_conflict") {
-    throw new WorkspaceConflictError(
-      syncResult.errorMessage ||
-        "Workspace version conflict. Please refresh and try again.",
+  if (localSyncStates.length === 0) {
+    console.log("No file changes detected. Proceeding directly to execution.");
+  } else {
+    // 2. First phase of 2PC: Call /sync to get actions
+    console.log("Syncing with server...", localSyncStates);
+    const syncRequest: SyncRequestAPI = {
+      workspaceVersion: currentLocalWorkspaceVersion,
+      files: localSyncStates,
+    };
+    const syncResponse = await syncWorkspace(
       workspaceId,
-      syncResult.newWorkspaceVersion
+      syncRequest,
+      authToken
     );
-  }
-  if (syncResult.status === "error") {
-    throw new Error(
-      syncResult.errorMessage || "Sync process resulted in an error."
+
+    if (syncResponse.status === "workspace_conflict") {
+      throw new WorkspaceConflictError(
+        syncResponse.errorMessage || "Workspace version conflict during sync.",
+        syncResponse.newWorkspaceVersion
+      );
+    }
+    if (syncResponse.status === "error") {
+      throw new Error(syncResponse.errorMessage || "Unknown error during sync.");
+    }
+
+    // 3. Perform client-side actions (uploads)
+    const uploadActions = syncResponse.actions.filter(
+      (a) => a.actionRequired === "upload"
     );
-  }
-  if (syncResult.status === "no_changes") {
-    console.log(
-      "No file changes to sync according to server. Proceeding to execution."
-    );
-  } else if (syncResult.status === "pending_confirmation") {
-    const filePromises: Promise<ConfirmSyncFileItemAPI>[] = [];
-    for (const action of syncResult.actions) {
-      if (action.actionRequired === "upload" && action.presignedUrl) {
-        const editorFile = filesInEditor.find(
-          (f) => f.filePath === action.filePath
-        );
-        if (editorFile) {
-          const currentFileHash = calculateHash(editorFile.content);
-          const uploadPromise = fetch(action.presignedUrl, {
+    if (uploadActions.length > 0) {
+      console.log(`Uploading ${uploadActions.length} files...`);
+      const uploadPromises = uploadActions.map((action) => {
+        const fileToUpload = editorFileMap.get(action.filePath);
+        if (fileToUpload && action.presignedUrl) {
+          return fetch(action.presignedUrl, {
             method: "PUT",
-            body: editorFile.content,
-          })
-            .then((uploadRes): ConfirmSyncFileItemAPI => {
-              if (!uploadRes.ok)
-                return {
-                  filePath: action.filePath,
-                  r2ObjectKey: action.r2ObjectKey || "",
-                  actionConfirmed: "uploaded",
-                  status: "failed",
-                  error: `Upload failed: ${uploadRes.status}`,
-                };
-              return {
-                filePath: action.filePath,
-                r2ObjectKey: action.r2ObjectKey || "",
-                actionConfirmed: "uploaded",
-                status: "success",
-                clientHash: currentFileHash,
-              };
-            })
-            .catch(
-              (err): ConfirmSyncFileItemAPI => ({
-                filePath: action.filePath,
-                r2ObjectKey: action.r2ObjectKey || "",
-                actionConfirmed: "uploaded",
-                status: "failed",
-                error: err.message,
-              })
-            );
-          filePromises.push(uploadPromise);
-        } else {
-          filePromises.push(
-            Promise.resolve({
-              filePath: action.filePath,
-              r2ObjectKey: action.r2ObjectKey || "",
-              actionConfirmed: "uploaded",
-              status: "failed",
-              error: "File not in editor",
-            })
+            body: fileToUpload.content,
+            headers: {
+              "Content-Type": "application/octet-stream",
+            },
+          });
+        }
+        return Promise.reject(
+          new Error(`File not found or no presigned URL for ${action.filePath}`)
+        );
+      });
+      await Promise.all(uploadPromises);
+      console.log("All uploads completed.");
+    }
+
+    // 4. Second phase of 2PC: Call /sync/confirm
+    if (syncResponse.newWorkspaceVersion) {
+      const confirmActions = syncResponse.actions.map(
+        (action) => {
+          const file = editorFileMap.get(action.filePath);
+          const clientHash = file ? calculateHash(file.content) : undefined;
+          const size = file ? new Blob([file.content]).size : undefined;
+
+          let confirmActionType: "upsert" | "delete" | undefined = undefined;
+          if (action.actionRequired === "upload") {
+            confirmActionType = "upsert";
+          } else if (action.actionRequired === "delete") {
+            confirmActionType = "delete";
+          }
+
+          if (!confirmActionType) {
+            return null;
+          }
+
+          return {
+            filePath: action.filePath,
+            fileId: action.fileId || "", // Should always be present from backend
+            r2ObjectKey: action.r2ObjectKey,
+            action: confirmActionType,
+            clientHash: clientHash,
+            size: size,
+          };
+        }
+      ).filter(action => action !== null) as FileActionAPI[];
+
+      if (confirmActions.length > 0) {
+        console.log("Confirming sync with server...", confirmActions);
+        const confirmRequest: ConfirmSyncRequestAPI = {
+          workspaceVersion: syncResponse.newWorkspaceVersion,
+          syncActions: confirmActions,
+        };
+
+        const confirmResponse = await confirmSyncWorkspace(
+          workspaceId,
+          confirmRequest,
+          authToken
+        );
+        if (confirmResponse.status !== "success") {
+          throw new Error(
+            confirmResponse.errorMessage || "Failed to confirm sync."
           );
         }
-      } else if (action.actionRequired === "delete") {
-        const localManifestFile = localManifestMap.get(action.filePath);
-        filePromises.push(
-          Promise.resolve({
-            filePath: action.filePath,
-            r2ObjectKey:
-              action.r2ObjectKey || localManifestFile?.r2ObjectKey || "",
-            actionConfirmed: "deleted",
-            status: "success",
-          })
-        );
-      } else if (action.actionRequired === "conflict") {
-        throw new Error(
-          `File conflict for ${action.filePath}. Server version: ${action.serverVersion}`
+        console.log(
+          "Sync confirmed. New workspace version:",
+          confirmResponse.finalWorkspaceVersion
         );
       }
-    }
-
-    const confirmedFilesResults = await Promise.all(filePromises);
-    const successfulConfirmations = confirmedFilesResults.filter(
-      (f) => f.status === "success"
-    );
-
-    if (
-      successfulConfirmations.length !==
-        confirmedFilesResults.filter((f) => f.actionConfirmed).length &&
-      successfulConfirmations.length > 0
-    ) {
-      const failedOps = confirmedFilesResults.filter(
-        (f) => f.status === "failed"
-      );
-      throw new Error(
-        `Some file operations failed: ${failedOps
-          .map((f) => f.filePath)
-          .join(", ")}.`
-      );
-    }
-
-    if (successfulConfirmations.length > 0) {
-      const confirmPayload: ConfirmSyncRequestAPI = {
-        newWorkspaceVersion: syncResult.newWorkspaceVersion!,
-        baseVersion: currentLocalWorkspaceVersion.toString(),
-        actions: successfulConfirmations,
-      };
-      const confirmResult = await confirmSyncWorkspace(
-        workspaceId,
-        confirmPayload,
-        authToken
-      );
-      console.log("Confirm Sync API Result:", confirmResult);
-      if (confirmResult.status !== "success") {
-        throw new Error(
-          confirmResult.errorMessage || "Final confirmation failed."
-        );
-      }
-      finalWorkspaceVersion = confirmResult.finalWorkspaceVersion;
-    } else if (
-      syncResult.actions.some(
-        (a) => a.actionRequired === "upload" || a.actionRequired === "delete"
-      )
-    ) {
-      // Actions were required, but none succeeded or were confirmable.
-      throw new Error(
-        "Required file operations could not be successfully confirmed."
-      );
     }
   }
 
-  // 3. Call /workspaces/:workspaceId/execute
-  const executePayload: ExecuteAuthRequestBody = executionDetails;
-  const executionApiResponse = await fetch(
+  // 5. Execute code
+  console.log("Proceeding to execute code with details:", executionDetails);
+  const response = await fetch(
     `${API_BASE_URL}/api/workspaces/${workspaceId}/execute`,
     {
       method: "POST",
@@ -431,25 +375,18 @@ export async function executeCodeAuth(
         "Content-Type": "application/json",
         Authorization: `Bearer ${authToken}`,
       },
-      body: JSON.stringify(executePayload),
+      body: JSON.stringify(executionDetails),
     }
   );
 
-  if (!executionApiResponse.ok) {
-    const errorData = await executionApiResponse
-      .json()
-      .catch(() => ({ message: "Execute API call failed" }));
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
     throw new Error(
-      errorData.error ||
-        `Execute API HTTP error! status: ${executionApiResponse.status}`
+      errorData.error || `Execute API HTTP error! status: ${response.status}`
     );
   }
-  const executionResponse = (await executionApiResponse.json()) as ExecuteResponse;
 
-  return {
-    executionResponse,
-    newWorkspaceVersion: finalWorkspaceVersion,
-  };
+  return (await response.json()) as ExecuteCodeAuthResponse;
 }
 
 export async function listWorkspaces(

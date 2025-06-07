@@ -82,7 +82,7 @@ func NewApiController(fs *firestore.Client, tasksClient *cloudtasks.Client, pres
 }
 
 // HandleSync processes a batch of client file states, compares with Firestore, 
-// and returns necessary actions (like generating pre-signed URLs for uploads/deletes).
+// and returns necessary actions (like generating pre-signed URLs for uploads).
 // This is phase 1 of 2PC.
 func (ac *ApiController) HandleSync(c *gin.Context) {
 	workspaceID := c.Param("workspaceId")
@@ -158,10 +158,8 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 	filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
 
 	for _, clientFile := range req.Files {
-		r2ObjectKey := "" // Will be determined based on whether it's new or existing
 		currentAction := SyncResponseFileAction{
-			FilePath:    clientFile.FilePath,
-			// R2ObjectKey will be set below
+			FilePath: clientFile.FilePath,
 		}
 		itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath)
 
@@ -170,6 +168,8 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 			var serverMeta FileMetadata
 			foundServerMeta := false
 			serverHash := ""
+			fileID := ""
+			r2ObjectKey := ""
 
 			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", clientFile.FilePath).Limit(1)
 			docs, err := query.Documents(ctx).GetAll()
@@ -180,23 +180,26 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 				if err := docs[0].DataTo(&serverMeta); err == nil {
 					foundServerMeta = true
 					serverHash = serverMeta.Hash
-					r2ObjectKey = serverMeta.R2ObjectKey // Use existing R2 key for modified files
+					fileID = serverMeta.FileID // Use existing FileID
 				} else {
 					itemLogCtx.WithError(err).Error("Error unmarshalling Firestore data for existing file.")
 				}
 			}
-			currentAction.R2ObjectKey = r2ObjectKey // Set it for the response action
 
-			if clientFile.Action == "new" || !foundServerMeta || (clientFile.Action == "modified" && clientFile.ClientHash != serverHash) {
-				if clientFile.Action == "new" || r2ObjectKey == "" {
-					// For new or modified files, the R2 object key is directly derived from its logical file path.
-					// This preserves the folder structure in R2.
-					currentAction.R2ObjectKey = fmt.Sprintf("workspaces/%s/%s", workspaceID, clientFile.FilePath)
+			needsUpload := clientFile.Action == "new" || !foundServerMeta || (clientFile.Action == "modified" && clientFile.ClientHash != serverHash)
+
+			if needsUpload {
+				if fileID == "" {
+					fileID = uuid.New().String()
+					itemLogCtx.Infof("Generated new FileID: %s", fileID)
 				}
+
+				fileNameOnly := filepath.Base(clientFile.FilePath)
+				r2ObjectKey = fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceID, fileID, fileNameOnly)
 
 				presignedPutURL, presignErr := ac.R2PresignClient.PresignPutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(ac.R2BucketName),
-					Key:    aws.String(currentAction.R2ObjectKey),
+					Key:    aws.String(r2ObjectKey),
 				}, func(po *s3.PresignOptions) {
 					po.Expires = presignDuration
 				})
@@ -210,11 +213,13 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 				}
 			} else {
 				currentAction.ActionRequired = "none"
-				currentAction.Message = "File up to date or hash matches"
+				currentAction.Message = "File up to date"
+				r2ObjectKey = serverMeta.R2ObjectKey // carry over existing key if no upload needed
 			}
+			currentAction.FileID = fileID
+			currentAction.R2ObjectKey = r2ObjectKey
 
 		case "deleted":
-			// Fetch R2ObjectKey for deletion from server's metadata
 			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", clientFile.FilePath).Limit(1)
 			docs, err := query.Documents(ctx).GetAll()
 			if err != nil || len(docs) == 0 {
@@ -224,6 +229,7 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 			} else {
 				var serverMeta FileMetadata
 				if err := docs[0].DataTo(&serverMeta); err == nil {
+					currentAction.FileID = serverMeta.FileID
 					currentAction.R2ObjectKey = serverMeta.R2ObjectKey
 					currentAction.ActionRequired = "delete"
 					itemLogCtx.Info("Marked for deletion. Server will delete on confirm.")
@@ -237,12 +243,12 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 		case "unchanged":
 			currentAction.ActionRequired = "none"
 			currentAction.Message = "File unchanged as per client"
-			// We still need to ensure R2ObjectKey is in the response for client consistency, if known
 			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", clientFile.FilePath).Limit(1)
 			docs, err := query.Documents(ctx).GetAll()
 			if err == nil && len(docs) > 0 {
 				var serverMeta FileMetadata
 				if docs[0].DataTo(&serverMeta) == nil {
+					currentAction.FileID = serverMeta.FileID
 					currentAction.R2ObjectKey = serverMeta.R2ObjectKey
 				}
 			}
@@ -345,142 +351,148 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		return
 	}
 
+	// This list will hold R2 keys that should be deleted AFTER the transaction succeeds.
+	var r2KeysToDelete []string
+
 	err = ac.FirestoreClient.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		// --- READ PHASE ---
 		wsDocRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
 		wsDocSnap, err := tx.Get(wsDocRef)
 		if err != nil {
-			return fmt.Errorf("failed to get workspace for version increment: %w", err)
+			return fmt.Errorf("failed to get workspace for version check: %w", err)
 		}
 
-		currentVersionStr := "0"
-		if version, err := wsDocSnap.DataAt("workspace_version"); err == nil {
-			if v, ok := version.(string); ok {
-				currentVersionStr = v
+		var workspaceData Workspace
+		if err := wsDocSnap.DataTo(&workspaceData); err != nil {
+			return fmt.Errorf("failed to parse workspace data: %w", err)
+		}
+
+		// --- VALIDATION PHASE ---
+		baseVersionInt, err := strconv.Atoi(workspaceData.WorkspaceVersion)
+		if err != nil {
+			return fmt.Errorf("server workspace version '%s' is invalid", workspaceData.WorkspaceVersion)
+		}
+		clientVersionInt, err := strconv.Atoi(req.WorkspaceVersion)
+		if err != nil {
+			return fmt.Errorf("client workspace version '%s' is invalid", req.WorkspaceVersion)
+		}
+
+		// Optimistic Concurrency Control Check
+		if clientVersionInt != baseVersionInt+1 {
+			return fmt.Errorf("workspace version mismatch: server is at %d, but client commit is for %d", baseVersionInt, clientVersionInt-1)
+		}
+
+		// --- PREPARE WRITES / DELETES ---
+		filesCollectionRef := ac.FirestoreClient.Collection(fmt.Sprintf("workspaces/%s/files", workspaceID))
+		for _, clientFile := range req.SyncActions {
+			switch clientFile.Action {
+			case "delete":
+				// For deletes, we need to read the existing doc to get the R2 key for later deletion.
+				query := filesCollectionRef.Where("file_path", "==", clientFile.FilePath).Limit(1)
+				docs, err := tx.Documents(query).GetAll()
+				if err != nil {
+					return fmt.Errorf("failed to query for file to delete '%s': %w", clientFile.FilePath, err)
+				}
+				if len(docs) > 0 {
+					var fileMeta FileMetadata
+					if err := docs[0].DataTo(&fileMeta); err == nil {
+						if fileMeta.R2ObjectKey != "" {
+							r2KeysToDelete = append(r2KeysToDelete, fileMeta.R2ObjectKey)
+						}
+					}
+				}
 			}
 		}
 
-		if currentVersionStr != req.BaseVersion {
-			return fmt.Errorf("transaction version conflict: client base version %s does not match server version %s", req.BaseVersion, currentVersionStr)
-		}
-
-		newVersion, _ := strconv.Atoi(currentVersionStr)
-		newVersion++
-		newVersionStr := strconv.Itoa(newVersion)
-
+		// --- WRITE PHASE ---
+		// 1. Update workspace version and timestamp.
 		err = tx.Update(wsDocRef, []firestore.Update{
-			{Path: "workspace_version", Value: newVersionStr},
+			{Path: "workspace_version", Value: req.WorkspaceVersion},
 			{Path: "updated_at", Value: time.Now().UTC()},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to increment workspace version: %w", err)
 		}
 
-		filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
+		// 2. Perform file metadata writes and deletes.
+		for _, clientFile := range req.SyncActions {
+			fileDocRef := filesCollectionRef.Doc(SanitizePathToDocID(clientFile.FilePath))
 
-		for _, action := range req.Actions {
-			if action.ActionConfirmed != "uploaded" && action.ActionConfirmed != "deleted" {
-				continue // Skip actions that don't require server-side changes
-			}
-
-			if action.ActionConfirmed == "uploaded" {
-				fileID := uuid.New().String()
-				// The R2 object key is now passed from the client, which got it from the 'sync' phase.
-				// We no longer generate it here, but we could add a validation step if needed.
-				fileMetadata := FileMetadata{
-					FileID:      fileID,
-					FilePath:    action.FilePath,
-					R2ObjectKey: action.R2ObjectKey,
-					Hash:        action.ClientHash,
-					Size:        action.Size,
-					ContentType: action.ContentType,
-					WorkspaceID: workspaceID,
-					UserID:      userID,
+			switch clientFile.Action {
+			case "upsert":
+				itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath).WithField("action", clientFile.Action)
+				newMeta := FileMetadata{
+					FileID:      clientFile.FileID,
+					FilePath:    clientFile.FilePath,
+					Hash:        clientFile.ClientHash,
+					R2ObjectKey: clientFile.R2ObjectKey,
+					Size:        clientFile.Size,
 					UpdatedAt:   time.Now().UTC(),
 				}
 
-				query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", action.FilePath).Limit(1)
-				docs, err := tx.Documents(query).GetAll()
-				if err != nil {
-					return fmt.Errorf("failed to query existing file for modification %s: %w", action.FilePath, err)
+				// Check if document exists to preserve created_at timestamp
+				docSnap, err := tx.Get(fileDocRef)
+				if err != nil && !strings.Contains(err.Error(), "not found") {
+					return fmt.Errorf("failed to get existing doc for upsert: %w", err)
 				}
 				
-				if len(docs) > 0 {
-					// It's a modification, update existing document
-					fileDocRef := docs[0].Ref
-					fileMetadata.FileID = fileDocRef.ID // Keep the original FileID
-					// Preserve original creation timestamp
+				if docSnap != nil && docSnap.Exists() {
 					var existingMeta FileMetadata
-					if err := docs[0].DataTo(&existingMeta); err == nil {
-						fileMetadata.CreatedAt = existingMeta.CreatedAt
-					} else {
-						fileMetadata.CreatedAt = time.Now().UTC()
-					}
-					err = tx.Set(fileDocRef, fileMetadata)
+					docSnap.DataTo(&existingMeta)
+					newMeta.CreatedAt = existingMeta.CreatedAt
 				} else {
-					// It's a new file, create new document
-					fileMetadata.CreatedAt = time.Now().UTC()
-					fileDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(fileID)
-					err = tx.Set(fileDocRef, fileMetadata)
-				}
-				if err != nil {
-					return fmt.Errorf("failed to set file metadata for %s in transaction: %w", action.FilePath, err)
-				}
-				logCtx.Infof("Successfully confirmed metadata for uploaded file '%s'.", action.FilePath)
-			}
-
-			if action.ActionConfirmed == "deleted" {
-				// The client has confirmed the deletion. The server now performs the secure deletion.
-				if action.R2ObjectKey == "" {
-					logCtx.Warnf("Skipping deletion for '%s' because R2ObjectKey is missing in confirm request.", action.FilePath)
-					continue
+					newMeta.CreatedAt = newMeta.UpdatedAt
 				}
 
-				// 1. Delete from R2
-				_, err := ac.R2S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
-					Bucket: aws.String(ac.R2BucketName),
-					Key:    aws.String(action.R2ObjectKey),
-				})
-				if err != nil {
-					logCtx.WithError(err).Warnf("Failed to delete object '%s' from R2.", action.R2ObjectKey)
+				itemLogCtx.WithFields(log.Fields{
+					"fileID":      newMeta.FileID,
+					"r2ObjectKey": newMeta.R2ObjectKey,
+				}).Info("Upserting file metadata in Firestore.")
+				if err := tx.Set(fileDocRef, newMeta); err != nil {
+					return fmt.Errorf("failed to upsert file %s: %w", clientFile.FilePath, err)
 				}
 
-				// 2. Delete metadata from Firestore
-				query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", action.FilePath).Limit(1)
-				docs, err := tx.Documents(query).GetAll()
-				if err != nil {
-					logCtx.WithError(err).Warnf("Failed to query for file to delete from Firestore: %s", action.FilePath)
-					continue
-				}
-				for _, doc := range docs {
-					err = tx.Delete(doc.Ref)
-					if err != nil {
-						return fmt.Errorf("failed to delete firestore doc for %s: %w", action.FilePath, err)
+			case "delete":
+				itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath).WithField("action", clientFile.Action)
+				itemLogCtx.Info("Deleting file metadata from Firestore.")
+				if err := tx.Delete(fileDocRef); err != nil {
+					if !strings.Contains(err.Error(), "not found"){
+						itemLogCtx.WithError(err).Warn("Failed to delete file metadata, might have been deleted already or never existed.")
 					}
 				}
-				logCtx.Infof("Successfully processed deletion for '%s'.", action.FilePath)
 			}
 		}
-
 		return nil
 	})
 
 	if err != nil {
 		logCtx.WithError(err).Error("Transaction failed in ConfirmSync.")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to confirm sync: " + err.Error()})
+		c.JSON(http.StatusConflict, ConfirmSyncResponse{
+			Status:       "error",
+			ErrorMessage: "Failed to confirm sync: " + err.Error(),
+		})
 		return
 	}
 
-	wsDoc, err := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID).Get(ctx)
-	if err != nil {
-		logCtx.WithError(err).Error("Failed to fetch final workspace version after sync.")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to confirm final workspace version."})
-		return
+	// After transaction succeeds, delete the R2 objects
+	if len(r2KeysToDelete) > 0 {
+		logCtx.Infof("Starting deletion of %d R2 objects post-transaction.", len(r2KeysToDelete))
+		for _, key := range r2KeysToDelete {
+			_, err := ac.R2S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(ac.R2BucketName),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				logCtx.WithError(err).Errorf("Failed to delete object '%s' from R2.", key)
+			} else {
+				logCtx.Infof("Successfully deleted object '%s' from R2.", key)
+			}
+		}
 	}
-	finalVersion := wsDoc.Data()["workspace_version"].(string)
 
 	c.JSON(http.StatusOK, ConfirmSyncResponse{
 		Status:                "success",
-		FinalWorkspaceVersion: finalVersion,
+		FinalWorkspaceVersion: req.WorkspaceVersion,
 	})
 }
 
@@ -850,6 +862,36 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		return
 	}
 
+	// --- Fetch File Manifest ---
+	ctx := c.Request.Context()
+	filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
+	iter := ac.FirestoreClient.Collection(filesCollectionPath).Documents(ctx)
+	defer iter.Stop()
+
+	var workerFiles []WorkerFile
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			logCtx.WithError(err).Error("Failed to iterate over file documents for execution manifest.")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve workspace files for execution."})
+			return
+		}
+
+		var fileMeta FileMetadata
+		if err := doc.DataTo(&fileMeta); err != nil {
+			logCtx.WithError(err).WithField("document_id", doc.Ref.ID).Warn("Failed to parse file metadata for execution manifest.")
+			continue
+		}
+		workerFiles = append(workerFiles, WorkerFile{
+			R2ObjectKey: fileMeta.R2ObjectKey,
+			FilePath:    fileMeta.FilePath,
+		})
+	}
+	// --- End Fetch File Manifest ---
+
 	jobID := uuid.New().String()
 	logCtx = logCtx.WithField("job_id", jobID)
 
@@ -877,6 +919,7 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		Input:          req.Input,
 		R2BucketName:   ac.R2BucketName,
 		JobID:          jobID,
+		Files:          workerFiles,
 	}
 
 	payloadBytes, err := json.Marshal(taskPayload)
