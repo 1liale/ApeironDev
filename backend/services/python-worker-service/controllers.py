@@ -178,7 +178,7 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
                 if not response.get('IsTruncated'): break
                 continuation_token = response.get('NextContinuationToken')
             
-            logger.info(f"Job {job_id}: Found {len(objects_list)} R2 objects for workspace {payload.workspace_id}.")
+            logger.info(f"Job {job_id}: Found {len(objects_list)} objects in R2 for workspace {payload.workspace_id}.")
 
             if not objects_list:
                 msg = f"No files found in R2 at {r2_prefix}"
@@ -189,13 +189,16 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
             # Download each R2 object to the temporary directory
             for s3_obj in objects_list:
                 s3_key = s3_obj['Key']
+                logger.info(f"Job {job_id}: - Processing R2 object key: '{s3_key}' (Size: {s3_obj.get('Size', 'N/A')})")
                 # Skip the prefix itself or empty "directory" markers if S3 client lists them
                 if s3_key == r2_prefix or (s3_obj.get('Size', 0) == 0 and s3_key.endswith('/')):
+                     logger.info(f"Job {job_id}:   Skipping directory or empty object.")
                      continue
                 relative_path = s3_key[len(r2_prefix):]
                 if not relative_path: continue # Should not happen if previous check is robust
                 local_file = workspace_exec_dir / relative_path
                 local_file.parent.mkdir(parents=True, exist_ok=True) # Create subdirectories if they don't exist
+                logger.info(f"Job {job_id}:   Downloading to '{local_file}'")
                 s3_client.download_file(payload.r2_bucket_name, s3_key, str(local_file))
             
             entrypoint_script_local_path = workspace_exec_dir / payload.entrypoint_file.lstrip('/')
