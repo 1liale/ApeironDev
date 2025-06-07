@@ -104,8 +104,7 @@ export const CodeExecutionProvider = ({
     currentWorkspaceVersion,
     fileContentCache,
     refreshWorkspace,
-    setWorkspaceVersion,
-  } = useWorkspace() as WorkspaceContextType;
+  } = useWorkspace();
 
   const handleJobCompletionOrFailure = useCallback(
     (finalMessage: string) => {
@@ -191,7 +190,6 @@ export const CodeExecutionProvider = ({
 
     setIsExecuting(true);
     setConsoleOutput((prev) => [...prev, "Executing code..."]);
-    toast.info(`Starting execution for entrypoint ${activeFileForExecution}...`);
     
     if (isSignedIn && selectedWorkspace) {
       // --- AUTHENTICATED EXECUTION ---
@@ -221,7 +219,7 @@ export const CodeExecutionProvider = ({
           return;
         }
 
-        const { executionResponse, newWorkspaceVersion } = await executeCodeAuth(
+        const response = await executeCodeAuth(
           selectedWorkspace.workspaceId,
           token,
           filesInEditorForSync,
@@ -231,36 +229,36 @@ export const CodeExecutionProvider = ({
             input: consoleInputValue,
           },
           currentWorkspaceManifest,
-          currentWorkspaceVersion
+          currentWorkspaceVersion.toString()
         );
-
-        if (newWorkspaceVersion && newWorkspaceVersion !== currentWorkspaceVersion) {
-          console.log(`Workspace version updated from ${currentWorkspaceVersion} to ${newWorkspaceVersion}.`);
-          setWorkspaceVersion(newWorkspaceVersion.toString());
-          toast.success("Workspace synced successfully to the latest version.");
-        }
-
-        if (executionResponse.error || !executionResponse.job_id) {
+        
+        if (!response.job_id) {
           handleJobCompletionOrFailure(
-            `Error: ${
-              executionResponse.error || "Failed to start execution."
-            }`
+            `Error: Failed to start execution.`
           );
           return;
         }
-        setCurrentJobId(executionResponse.job_id);
-      } catch (error) {
-        if (error instanceof WorkspaceConflictError) {
-          toast.error("Your workspace data is out of date. Automatically refreshing...");
-          await refreshWorkspace(selectedWorkspace);
-          toast.info("Workspace refreshed. Please try running your code again.");
-          handleJobCompletionOrFailure("Execution cancelled due to workspace conflict.");
-        } else {
-          const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-          console.error("API call to /execute-auth failed:", error);
-          toast.error(`Authenticated execution failed: ${errorMessage}`);
-          handleJobCompletionOrFailure(`Error: ${errorMessage}`);
+
+        toast.success(`Execution started successfully at entrypoint: ${activeFileForExecution}, job_id: ${response.job_id}`);
+        setCurrentJobId(response.job_id);
+      } catch (err) {
+        let errorMessage = "An unknown error occurred during authenticated execution.";
+        if (err instanceof WorkspaceConflictError) {
+          toast.error("Workspace is out of sync", {
+            description: "A newer version is available. Refreshing will discard your local changes.",
+            action: {
+              label: "Refresh Now",
+              onClick: () => refreshWorkspace(selectedWorkspace),
+            },
+            duration: Infinity
+          });
+          errorMessage = `Execution failed: Workspace conflict.`;
+        } else if (err instanceof Error) {
+          errorMessage = `API call to /execute-auth failed: ${err.message}`;
+          console.error(errorMessage, err);
+          toast.error(err.message);
         }
+        handleJobCompletionOrFailure(`Error: ${errorMessage}`);
       }
     } else {
       // --- ANONYMOUS EXECUTION ---
@@ -276,6 +274,7 @@ export const CodeExecutionProvider = ({
           return;
         }
         setCurrentJobId(response.job_id);
+        toast.success(`Execution started successfully at entrypoint: ${activeFileForExecution}, job_id: ${response.job_id}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
         console.error("API call to /execute failed:", error);
@@ -296,7 +295,6 @@ export const CodeExecutionProvider = ({
     fileContentCache,
     isSignedIn,
     refreshWorkspace,
-    setWorkspaceVersion,
   ]);
 
   const debouncedExecute = customDebounce(execute, 1000);
