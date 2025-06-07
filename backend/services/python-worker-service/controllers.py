@@ -234,3 +234,8 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
             # Log critical failure if Firestore update fails after an unhandled exception
             logger.critical(f"Job {job_id}: CRITICAL - FAILED TO UPDATE Firestore after unhandled exception: {firestore_e}")
         raise HTTPException(status_code=500, detail=f"Internal error processing job {job_id}.")
+
+@router.get("/")
+async def health_check_endpoint():
+    logger.info("Health check / called.")
+    return {"status": "Python Worker Service is running (FastAPI)"}
