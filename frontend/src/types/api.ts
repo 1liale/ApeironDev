@@ -49,6 +49,7 @@ export interface WorkspaceSummaryItem {
 export interface WorkspaceFileManifestItem {
   fileId: string;
   filePath: string;
+  type: 'file' | 'folder';
   r2ObjectKey: string;
   size?: number;
   hash?: string;
@@ -65,7 +66,8 @@ export interface WorkspaceManifestResponse {
 // Represents client's view of a single file's content (primarily for local state)
 export interface ClientFileState {
   filePath: string;
-  content: string;
+  type: 'file' | 'folder';
+  content: string | null;
 }
 
 // ====== Sync Process Types (Phase 1: Client -> Server -> Client) ======
@@ -73,6 +75,7 @@ export interface ClientFileState {
 // Represents the state of a file as known by the client, to be sent to the /sync endpoint.
 export interface SyncFileClientStateAPI {
   filePath: string;
+  type: 'file' | 'folder';
   clientHash?: string;
   action: "new" | "modified" | "deleted" | "unchanged";
 }
@@ -85,6 +88,7 @@ export interface SyncRequestAPI {
 // Represents an action the client needs to take for a file, received from /sync endpoint.
 export interface SyncResponseFileActionAPI {
   filePath: string;
+  type: 'file' | 'folder';
   fileId?: string;
   r2ObjectKey: string;
   actionRequired: "upload" | "delete" | "none";
@@ -103,6 +107,7 @@ export interface SyncResponseAPI {
 
 export interface FileActionAPI {
   filePath: string;
+  type: 'file' | 'folder';
   fileId: string;
   r2ObjectKey: string;
   action: "upsert" | "delete";

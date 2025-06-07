@@ -160,6 +160,7 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 	for _, clientFile := range req.Files {
 		currentAction := SyncResponseFileAction{
 			FilePath: clientFile.FilePath,
+			Type:     clientFile.Type,
 		}
 		itemLogCtx := logCtx.WithField("filePath", clientFile.FilePath)
 
@@ -186,6 +187,21 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 				}
 			}
 
+			// For folders, we only care if they are new. "modified" doesn't apply.
+			if clientFile.Type == "folder" {
+				if clientFile.Action == "new" && !foundServerMeta {
+					fileID = uuid.New().String()
+					currentAction.ActionRequired = "upload" // This signals the client to include it in the confirm step
+					itemLogCtx.Info("New folder identified. Flagging for metadata creation.")
+				} else {
+					currentAction.ActionRequired = "none"
+				}
+				currentAction.FileID = fileID
+				responseActions = append(responseActions, currentAction)
+				continue // Go to next file
+			}
+
+			// --- File-specific logic from here ---
 			needsUpload := clientFile.Action == "new" || !foundServerMeta || (clientFile.Action == "modified" && clientFile.ClientHash != serverHash)
 
 			if needsUpload {
@@ -419,10 +435,14 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 				newMeta := FileMetadata{
 					FileID:      clientFile.FileID,
 					FilePath:    clientFile.FilePath,
-					Hash:        clientFile.ClientHash,
+					Type:        clientFile.Type,
 					R2ObjectKey: clientFile.R2ObjectKey,
-					Size:        clientFile.Size,
 					UpdatedAt:   time.Now().UTC(),
+				}
+
+				if clientFile.Type == "file" {
+					newMeta.Hash = clientFile.ClientHash
+					newMeta.Size = clientFile.Size
 				}
 
 				docSnap := existingFileDocs[clientFile.FilePath]
@@ -648,7 +668,8 @@ func (ac *ApiController) GetWorkspaceManifest(c *gin.Context) {
 			continue
 		}
 
-		if fileMeta.R2ObjectKey != "" {
+		// For files, generate a presigned URL. For folders, don't.
+		if fileMeta.Type == "file" && fileMeta.R2ObjectKey != "" {
 			presignedURLRequest, presignErr := ac.R2PresignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 				Bucket: aws.String(ac.R2BucketName),
 				Key:    aws.String(fileMeta.R2ObjectKey),
@@ -884,10 +905,13 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 			logCtx.WithError(err).WithField("document_id", doc.Ref.ID).Warn("Failed to parse file metadata for execution manifest.")
 			continue
 		}
-		workerFiles = append(workerFiles, WorkerFile{
-			R2ObjectKey: fileMeta.R2ObjectKey,
-			FilePath:    fileMeta.FilePath,
-		})
+		// Only include actual files for the worker to download and use.
+		if fileMeta.Type == "file" {
+			workerFiles = append(workerFiles, WorkerFile{
+				R2ObjectKey: fileMeta.R2ObjectKey,
+				FilePath:    fileMeta.FilePath,
+			})
+		}
 	}
 	// --- End Fetch File Manifest ---
 

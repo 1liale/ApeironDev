@@ -61,7 +61,8 @@ type WorkspaceMembership struct {
 type FileMetadata struct {
 	FileID        string    `json:"fileId" firestore:"file_id"`
 	FilePath      string    `json:"filePath" firestore:"file_path"`
-	R2ObjectKey   string    `json:"r2ObjectKey" firestore:"r2_object_key"`
+	Type          string    `json:"type" firestore:"type"` // "file" or "folder"
+	R2ObjectKey   string    `json:"r2ObjectKey,omitempty" firestore:"r2_object_key,omitempty"`
 	Size          int64     `json:"size,omitempty" firestore:"size,omitempty"`
 	Hash          string    `json:"hash,omitempty" firestore:"hash,omitempty"`
 	CreatedAt     time.Time `json:"createdAt" firestore:"created_at"`
@@ -80,6 +81,7 @@ type WorkspaceManifestResponse struct {
 // SyncFileClientState represents a single file's state as known by the client.
 type SyncFileClientState struct {
 	FilePath   string `json:"filePath" binding:"required"`
+	Type       string `json:"type" binding:"required"`
 	ClientHash string `json:"clientHash,omitempty"`
 	Action     string `json:"action" binding:"required"` // "new", "modified", "deleted", "unchanged"
 }
@@ -93,6 +95,7 @@ type SyncRequest struct {
 // SyncResponseFileAction represents an action the client needs to take for a file.
 type SyncResponseFileAction struct {
 	FilePath       string `json:"filePath"`
+	Type           string `json:"type"`
 	FileID         string `json:"fileId,omitempty"`
 	R2ObjectKey    string `json:"r2ObjectKey"`
 	ActionRequired string `json:"actionRequired"` // "upload", "delete", "none"
@@ -113,6 +116,7 @@ type SyncResponse struct {
 // FileAction represents the client-confirmed action for a single file.
 type FileAction struct {
 	FilePath    string `json:"filePath" binding:"required"`
+	Type        string `json:"type" binding:"required"`
 	FileID      string `json:"fileId" binding:"required"`
 	R2ObjectKey string `json:"r2ObjectKey"` // Key for new object in "upsert", old object in "delete"
 	Action      string `json:"action" binding:"required"` // "upsert", "delete"

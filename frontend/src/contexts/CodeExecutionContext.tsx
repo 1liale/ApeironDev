@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { executeCodeAuth, executeCode } from "@/lib/api";
 import { WorkspaceConflictError } from "@/types/errors";
-import type { ExecuteRequestBody } from "@/types/api";
+import type { ExecuteRequestBody, ClientFileState } from "@/types/api";
 import { useAuth } from "@clerk/react-router";
 import { useWorkspace, WorkspaceContextType } from "@/contexts/WorkspaceContext";
 import { auth, firestoreDB } from "@/lib/firebase"; // Firebase integration
@@ -103,6 +103,7 @@ export const CodeExecutionProvider = ({
     currentWorkspaceManifest,
     currentWorkspaceVersion,
     fileContentCache,
+    manifestAndVersionCache,
     refreshWorkspace,
   } = useWorkspace();
 
@@ -199,19 +200,37 @@ export const CodeExecutionProvider = ({
           throw new Error("Authentication token not available for signed-in user.");
         }
 
-        const filesMap = new Map<string, string>();
+        console.log("manifestAndVersionCache", manifestAndVersionCache);
+
+        const filesInEditorForSync: ClientFileState[] = [];
         const workspaceCache = fileContentCache[selectedWorkspace.workspaceId];
+
         if (workspaceCache) {
           for (const [filePath, fileContent] of Object.entries(workspaceCache)) {
-            filesMap.set(filePath, fileContent);
+            filesInEditorForSync.push({
+              filePath,
+              content: fileContent,
+              type: fileContent === null ? 'folder' : 'file',
+            });
           }
         }
-        // Ensure the active file from the editor (which is the entrypoint) is the most up-to-date version
-        filesMap.set(activeFileForExecution, code);
 
-        const filesInEditorForSync = Array.from(filesMap.entries()).map(
-          ([filePath, content]) => ({ filePath, content })
-        );
+        // Ensure the active file from the editor (which is the entrypoint) is the most up-to-date version
+        const activeFileIndex = filesInEditorForSync.findIndex(f => f.filePath === activeFileForExecution);
+        if (activeFileIndex !== -1) {
+          filesInEditorForSync[activeFileIndex].content = code;
+        } else {
+          // This case handles when the active file is new and not yet in the cache.
+          // It's unlikely with current file management, but a good safeguard.
+          filesInEditorForSync.push({
+            filePath: activeFileForExecution,
+            content: code,
+            type: 'file'
+          });
+        }
+        
+        console.log("filesInEditorForSync", filesInEditorForSync);
+        console.log("workspaceCache", workspaceCache);
 
         if (filesInEditorForSync.length === 0) {
           toast.error("No files to sync or execute for the workspace.");

@@ -230,28 +230,37 @@ export async function executeCodeAuth(
   // Check for new and modified files
   for (const file of filesInEditor) {
     const manifestItem = localManifestMap.get(file.filePath);
-    const currentHash = calculateHash(file.content);
+    if (file.type === 'folder') {
+        if (!manifestItem) {
+            localSyncStates.push({ filePath: file.filePath, action: 'new', type: 'folder' });
+        }
+        continue; // No hash calculation for folders
+    }
+    const currentHash = calculateHash(file.content ?? '');
     if (!manifestItem) {
       localSyncStates.push({
         filePath: file.filePath,
         clientHash: currentHash,
         action: "new",
+        type: "file",
       });
     } else if (manifestItem.hash !== currentHash) {
       localSyncStates.push({
         filePath: file.filePath,
         clientHash: currentHash,
         action: "modified",
+        type: "file",
       });
     }
   }
 
-  // Check for deleted files
+  // Check for deleted files or folders
   for (const manifestItem of currentLocalManifestItems) {
     if (!editorFileMap.has(manifestItem.filePath)) {
       localSyncStates.push({
         filePath: manifestItem.filePath,
         action: "deleted",
+        type: manifestItem.type,
       });
     }
   }
@@ -279,11 +288,12 @@ export async function executeCodeAuth(
     }
 
     // 3. Perform client-side actions (uploads)
-    const uploadActions = syncResponse.actions.filter(
-      (a) => a.actionRequired === "upload"
-    );
-    if (uploadActions.length > 0) {
-      const uploadPromises = uploadActions.map((action) => {
+    const actionsWithPresignedUrls = syncResponse.actions;
+
+    // 2. Upload files that the server requested
+    const uploadPromises = actionsWithPresignedUrls
+      .filter((action) => action.actionRequired === "upload" && action.type === 'file')
+      .map(async (action) => {
         const fileToUpload = editorFileMap.get(action.filePath);
         if (fileToUpload && action.presignedUrl) {
           return fetch(action.presignedUrl, {
@@ -298,55 +308,39 @@ export async function executeCodeAuth(
           new Error(`File not found or no presigned URL for ${action.filePath}`)
         );
       });
-      await Promise.all(uploadPromises);
-    }
+    await Promise.all(uploadPromises);
 
     // 4. Second phase of 2PC: Call /sync/confirm
     if (syncResponse.newWorkspaceVersion) {
-      const confirmActions = syncResponse.actions.map(
-        (action) => {
-          const file = editorFileMap.get(action.filePath);
-          const clientHash = file ? calculateHash(file.content) : undefined;
-          const size = file ? new Blob([file.content]).size : undefined;
+      const payloadForConfirm: ConfirmSyncRequestAPI = {
+        workspaceVersion: syncResponse.newWorkspaceVersion!,
+        syncActions: actionsWithPresignedUrls
+          .filter((action) => action.actionRequired === "upload" || action.actionRequired === "delete")
+          .map((action): FileActionAPI => {
+            const fileState = editorFileMap.get(action.filePath);
+            const content = fileState?.content ?? '';
+            return {
+              filePath: action.filePath,
+              fileId: action.fileId!,
+              r2ObjectKey: action.r2ObjectKey,
+              action: action.actionRequired === 'upload' ? 'upsert' : 'delete',
+              type: action.type,
+              // Only include hash and size for files
+              clientHash: action.type === 'file' ? calculateHash(content) : undefined,
+              size: action.type === 'file' ? new Blob([content]).size : undefined,
+            };
+          }),
+      };
 
-          let confirmActionType: "upsert" | "delete" | undefined = undefined;
-          if (action.actionRequired === "upload") {
-            confirmActionType = "upsert";
-          } else if (action.actionRequired === "delete") {
-            confirmActionType = "delete";
-          }
-
-          if (!confirmActionType) {
-            return null;
-          }
-
-          return {
-            filePath: action.filePath,
-            fileId: action.fileId || "", // Should always be present from backend
-            r2ObjectKey: action.r2ObjectKey,
-            action: confirmActionType,
-            clientHash: clientHash,
-            size: size,
-          };
-        }
-      ).filter(action => action !== null) as FileActionAPI[];
-
-      if (confirmActions.length > 0) {
-        const confirmRequest: ConfirmSyncRequestAPI = {
-          workspaceVersion: syncResponse.newWorkspaceVersion,
-          syncActions: confirmActions,
-        };
-
-        const confirmResponse = await confirmSyncWorkspace(
-          workspaceId,
-          confirmRequest,
-          authToken
+      const confirmResponse = await confirmSyncWorkspace(
+        workspaceId,
+        payloadForConfirm,
+        authToken
+      );
+      if (confirmResponse.status !== "success") {
+        throw new Error(
+          confirmResponse.errorMessage || "Failed to confirm sync."
         );
-        if (confirmResponse.status !== "success") {
-          throw new Error(
-            confirmResponse.errorMessage || "Failed to confirm sync."
-          );
-        }
       }
     }
   }
