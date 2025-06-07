@@ -10,7 +10,7 @@ import {
   Edit3
 } from "lucide-react";
 import { NodeModel } from "@minoru/react-dnd-treeview";
-import { FileSystemNodeData } from "@/lib/filesystem"; // Corrected import name
+import { FileSystemNodeData } from "@/types/filesystem"; // Corrected import name
 import { cn } from '@/lib/utils';
 
 interface FileTreeNodeProps {
@@ -24,7 +24,6 @@ interface FileTreeNodeProps {
   editingNodeId: NodeModel['id'] | null;
   onStartEdit: (nodeId: NodeModel['id']) => void; // Will be used later
   onRenameSubmit: (nodeId: NodeModel['id'], newName: string) => void;
-  onEditCancel: (nodeId: NodeModel['id']) => void;
   onDeleteNode: (nodeId: NodeModel['id']) => void;
   onAddFileToFolder?: (folderId: NodeModel['id']) => void; // Optional, only for folders
   isDefaultFile?: boolean; // Added prop to identify the default file
@@ -82,8 +81,6 @@ export const FileTreeNode: React.FC<FileTreeNodeProps> = ({
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               onRenameSubmit(node.id, e.currentTarget.value);
-            } else if (e.key === 'Escape') {
-              onEditCancel(node.id);
             }
           }}
           className="bg-input text-foreground text-sm p-0.5 w-full focus:outline-none focus:ring-1 focus:ring-ring ml-1"

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useAuth } from '@clerk/react-router';
 import {
   listWorkspaces,
@@ -30,7 +30,7 @@ interface WorkspaceContextState {
   currentWorkspaceManifest: WorkspaceFileManifestItem[] | null;
   currentWorkspaceVersion: string | number | null;
   manifestAndVersionCache: Record<string, CachedManifestData>;
-  fileContentCache: Record<string, Record<string, string>>;
+  fileContentCache: Record<string, Record<string, string | null>>;
   isLoadingWorkspaces: boolean;
   isLoadingManifest: boolean;
   isLoadingWorkspaceContents: boolean;
@@ -45,7 +45,9 @@ interface WorkspaceContextActions {
   setWorkspaceVersion: (version: string | number) => void;
   updateFileContent: (filePath: string, newContent: string) => void;
   addFileToCache: (filePath: string) => void;
+  addFolderToCache: (folderPath: string) => void;
   renamePathInCache: (oldPath: string, newPath: string) => void;
+  removePathFromCache: (path: string) => void;
 }
 
 export type WorkspaceContextType = WorkspaceContextState & WorkspaceContextActions;
@@ -64,7 +66,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
   const [currentWorkspaceManifest, setCurrentWorkspaceManifest] = useState<WorkspaceFileManifestItem[] | null>(null);
   const [currentWorkspaceVersion, setCurrentWorkspaceVersion] = useState<string | number | null>(null);
   const [manifestAndVersionCache, setManifestAndVersionCache] = useState<Record<string, CachedManifestData>>({});
-  const [fileContentCache, setFileContentCache] = useState<Record<string, Record<string, string>>>({});
+  const [fileContentCache, setFileContentCache] = useState<Record<string, Record<string, string | null>>>({});
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [isLoadingWorkspaceContents, setIsLoadingWorkspaceContents] = useState(false);
@@ -169,13 +171,15 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       if (manifest && manifest.length > 0) {
         setIsLoadingWorkspaceContents(true);
-        const newFileContents: Record<string, string> = {};
+        const newFileContents: Record<string, string | null> = {};
         const contentPromises = manifest.map(async (fileItem) => {
-          if (fileItem.contentUrl) {
+          if (fileItem.type === 'file' && fileItem.contentUrl) {
             const content = await fetchFileContent(fileItem.contentUrl, fileItem.filePath);
             if (content !== null) {
               newFileContents[fileItem.filePath] = content;
             }
+          } else if (fileItem.type === 'folder') {
+            newFileContents[fileItem.filePath] = null; // Explicitly mark folders
           }
         });
         await Promise.all(contentPromises);
@@ -241,6 +245,50 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     });
   }, [selectedWorkspace]);
 
+  const addFolderToCache = useCallback((folderPath: string) => {
+    if (!selectedWorkspace) return;
+
+    setFileContentCache(prevCache => {
+      if (prevCache[selectedWorkspace.workspaceId]?.[folderPath] !== undefined) {
+        return prevCache;
+      }
+      return {
+        ...prevCache,
+        [selectedWorkspace.workspaceId]: {
+          ...(prevCache[selectedWorkspace.workspaceId] || {}),
+          [folderPath]: null, // Use null to signify a folder
+        },
+      };
+    });
+  }, [selectedWorkspace]);
+
+  const removePathFromCache = useCallback((path: string) => {
+    if (!selectedWorkspace) return;
+
+    setFileContentCache(prevCache => {
+      const workspaceCache = prevCache[selectedWorkspace.workspaceId];
+      if (!workspaceCache) return prevCache;
+      
+      const newWorkspaceCache = { ...workspaceCache };
+
+      // Remove the file/folder itself
+      delete newWorkspaceCache[path];
+
+      // If it's a folder, remove all children
+      const pathPrefix = path + '/';
+      Object.keys(newWorkspaceCache).forEach(key => {
+        if (key.startsWith(pathPrefix)) {
+          delete newWorkspaceCache[key];
+        }
+      });
+
+      return {
+        ...prevCache,
+        [selectedWorkspace.workspaceId]: newWorkspaceCache,
+      };
+    });
+  }, [selectedWorkspace]);
+
   const renamePathInCache = useCallback((oldPath: string, newPath: string) => {
     if (!selectedWorkspace) return;
 
@@ -250,22 +298,22 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
       
       const newWorkspaceCache = { ...workspaceCache };
       
-      // Handle file rename
+      // Handle file or empty folder rename
       if (newWorkspaceCache[oldPath] !== undefined) {
         newWorkspaceCache[newPath] = newWorkspaceCache[oldPath];
         delete newWorkspaceCache[oldPath];
-      } else {
-        // Handle folder rename by checking for path prefixes
-        const oldPathPrefix = oldPath + '/';
-        const newPathPrefix = newPath + '/';
-        Object.keys(newWorkspaceCache).forEach(key => {
-          if (key.startsWith(oldPathPrefix)) {
-            const newKey = newPathPrefix + key.substring(oldPathPrefix.length);
-            newWorkspaceCache[newKey] = newWorkspaceCache[key];
-            delete newWorkspaceCache[key];
-          }
-        });
       }
+      
+      // Handle folder content rename by checking for path prefixes
+      const oldPathPrefix = oldPath + '/';
+      const newPathPrefix = newPath + '/';
+      Object.keys(newWorkspaceCache).forEach(key => {
+        if (key.startsWith(oldPathPrefix)) {
+          const newKey = newPathPrefix + key.substring(oldPathPrefix.length);
+          newWorkspaceCache[newKey] = newWorkspaceCache[key];
+          delete newWorkspaceCache[key];
+        }
+      });
 
       return {
         ...prevCache,
@@ -355,7 +403,9 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     setWorkspaceVersion,
     updateFileContent,
     addFileToCache,
+    addFolderToCache,
     renamePathInCache,
+    removePathFromCache,
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

@@ -19,6 +19,7 @@ import { useAuth } from "@clerk/react-router";
 import { toast } from "@/components/ui/sonner"; 
 import { cn } from "@/lib/utils"; 
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { v4 as uuidv4 } from 'uuid';
 
 interface SidebarProps {
   activeFile: string;
@@ -45,11 +46,15 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
     selectedWorkspace, 
     currentWorkspaceManifest, 
     addFileToCache,
-    renamePathInCache 
+    addFolderToCache,
+    renamePathInCache,
+    removePathFromCache,
+    fileContentCache,
   } = useWorkspace();
   const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>([]);
   const [selectedNodePath, setSelectedNodePath] = useState<string | null>(null); 
-  
+  const [openNodeIds, setOpenNodeIds] = useState<Array<NodeModel['id']>>([]);
+  const [editingNodeId, setEditingNodeId] = useState<NodeModel['id'] | null>(null);
   const isWorkspaceActionsDisabled = !isSignedIn || !selectedWorkspace;
   
   // Effect 1: Rebuild the file tree only when the workspace or manifest changes.
@@ -103,7 +108,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const handleDrop = (newTree: NodeModel<FileSystemNodeData>[], options: { dragSource?: NodeModel<FileSystemNodeData>; dropTargetId?: NodeModel['id'] }) => {
     const { dragSource } = options;
     if (!dragSource?.data) {
-      setTreeData(newTree); // Fallback for safety
+      setTreeData(newTree);
       return;
     }
 
@@ -132,17 +137,14 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
     }
   };
   
-  const [openNodeIds, setOpenNodeIds] = useState<Array<NodeModel['id']>>([]);
+  /* File Tree Operations */
   
-
   const handleNodeClick = (node: NodeModel<FileSystemNodeData>) => {
     setSelectedNodePath(node.data!.path);
     if (node.data?.type === 'file') {
       onFileSelect(node.data.path);
     }
   };
-
-  const [editingNodeId, setEditingNodeId] = useState<NodeModel['id'] | null>(null);
 
   const initiateEditMode = (nodeId: NodeModel['id']) => {
     setTreeData(prevTreeData => 
@@ -153,10 +155,13 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
     setEditingNodeId(nodeId);
   };
 
-  const handleRenameSubmit = (nodeId: NodeModel['id'], newName: string) => {
-    if (!newName.trim()) {
-      const node = treeData.find(n => n.id === nodeId);
-      if (node && node.data?.isEditing && node.text === "") { 
+  const handleRenameSubmit = (nodeId: NodeModel['id'], nodeName: string) => {
+    const node = treeData.find(n => n.id === nodeId);
+    if (!node) return;
+
+    // If the name is empty, we either remove the transient new node or cancel the edit.
+    if (!nodeName.trim()) {
+      if (node.data?.isEditing && node.text === "") {
         setTreeData(prevTreeData => prevTreeData.filter(n => n.id !== nodeId));
       } else {
         setTreeData(prevTreeData => prevTreeData.map(n => n.id === nodeId ? {...n, data: {...n.data!, isEditing: false}} : n));
@@ -165,51 +170,39 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       return;
     }
 
-    const nodeBeingRenamed = treeData.find(n => n.id === nodeId);
-    if (!nodeBeingRenamed?.data) return;
+    const oldPath = node.data.path;
+    const isNewFileCreation = oldPath === "";
 
-    const oldPath = nodeBeingRenamed.data.path;
-    const isNewNode = nodeBeingRenamed.text === "";
-
-    const newTreeData = treeData.map(node => 
-      node.id === nodeId ? { ...node, text: newName, data: { ...node.data!, isEditing: false } } : node
+    // Update the node in the tree with the new name and recalculate all paths
+    const newTreeData = treeData.map(n =>
+      n.id === nodeId ? { ...n, text: nodeName, data: { ...n.data!, isEditing: false } } : n
     );
     const treeWithUpdatedPaths = updateAllPaths(newTreeData);
-    
     const newNode = treeWithUpdatedPaths.find(n => n.id === nodeId);
-    const newPath = newNode?.data?.path;
+    if (!newNode?.data) return; // Should not happen
 
-    if (!newPath) {
-      setEditingNodeId(null);
-      return;
-    }
-    
-    if (isNewNode) {
-      if (newNode.data?.type === 'file') {
+    const newPath = newNode.data.path;
+
+    // Handle caching and active file selection
+    if (isNewFileCreation) {
+      if (newNode.data.type === 'file') {
         addFileToCache(newPath);
+        onFileSelect(newPath); // Select the new file
+      } else if (newNode.data.type === 'folder') {
+        addFolderToCache(newPath);
       }
-    } else { 
+    } else {
       if (oldPath !== newPath) {
         renamePathInCache(oldPath, newPath);
+        // If active file was affected by rename, update its path
+        if (activeFile.startsWith(oldPath)) {
+          const updatedActiveFile = activeFile.replace(oldPath, newPath);
+          onFileSelect(updatedActiveFile);
+        }
       }
-    }
-    
-    if (activeFile.startsWith(oldPath)) {
-      const updatedActiveFile = activeFile.replace(oldPath, newPath);
-      onFileSelect(updatedActiveFile);
     }
 
     setTreeData(treeWithUpdatedPaths);
-    setEditingNodeId(null);
-  };
-
-  const handleEditCancel = (nodeId: NodeModel['id']) => {
-    const node = treeData.find(n => n.id === nodeId);
-    if (node && node.data?.isEditing && node.text === "") { 
-      setTreeData(prevTreeData => prevTreeData.filter(n => n.id !== nodeId));
-    } else { 
-      setTreeData(prevTreeData => prevTreeData.map(n => n.id === nodeId ? {...n, data: {...n.data!, isEditing: false}} : n));
-    }
     setEditingNodeId(null);
   };
   
@@ -218,9 +211,8 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       toast.warning("Please create or select a workspace to add files or folders.");
       return;
     }
-    const newId = Date.now(); 
-    const targetParentId = parentId === null ? 0 : parentId;
-
+    const newId = uuidv4(); 
+    const targetParentId = parentId || 0; // rootId is 0 by default
     const newNode: NodeModel<FileSystemNodeData> = {
       id: newId,
       parent: targetParentId,
@@ -228,7 +220,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       droppable: type === 'folder',
       data: {
         type: type,
-        path: "/", 
+        path: "", // Important: not '/' or Firestore will throw ERROR
       isEditing: true,
       },
     };
@@ -247,7 +239,10 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
 
   const handleDeleteNode = (nodeId: NodeModel['id']) => {
     const nodeToDelete = treeData.find(n => n.id === nodeId);
-    if (!nodeToDelete) return;
+    if (!nodeToDelete?.data) return;
+
+    const { path } = nodeToDelete.data;
+    removePathFromCache(path);
     
     const idsToRemove: Array<NodeModel['id'] > = [nodeId];
     const getDescendants = (currentId: NodeModel['id']) => {
@@ -300,7 +295,6 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
                 editingNodeId={editingNodeId}
                 onStartEdit={initiateEditMode}
                 onRenameSubmit={handleRenameSubmit}
-                onEditCancel={handleEditCancel}
                 onDeleteNode={handleDeleteNode}
                 onAddFileToFolder={(folderId) => handleAddFileOrFolder('file', folderId)}
                 isDefaultFile={!isSignedIn && node.id === 1}

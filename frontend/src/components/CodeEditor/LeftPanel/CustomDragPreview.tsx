@@ -1,6 +1,6 @@
 import React from 'react';
 import { NodeModel, DragLayerMonitorProps } from "@minoru/react-dnd-treeview";
-import { FileSystemNodeData } from '@/lib/filesystem';
+import type { FileSystemNodeData } from '@/types/filesystem';
 import { File, Folder } from 'lucide-react';
 
 interface CustomDragPreviewProps {

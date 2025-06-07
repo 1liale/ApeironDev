@@ -59,23 +59,22 @@ export const updateAllPaths = (
 
   const getPathForNode = (nodeId: string | number): string => {
     const node = nodeMap.get(nodeId);
-    if (!node) return ""; 
-    if (node.parent === rootId) {
+    if (!node) return "";
+
+    const parentNode = nodeMap.get(node.parent);
+    if (!parentNode || node.parent === rootId) {
       return node.text;
     }
-    // Find parent and recursively get its path
-    const parentNode = nodeMap.get(node.parent);
-    // If a node ends up without a parent in the map (shouldn't happen in a consistent tree)
-    // or its parent is the root, its path starts from root.
-    if (!parentNode) return node.text; 
     
     const parentPath = getPathForNode(node.parent);
     return `${parentPath}/${node.text}`;
   };
 
   return copiedNodes.map(node => {
+    if (!node.data) return node; // Return node as is if it has no data
+    
     const newPath = getPathForNode(node.id);
-    if (node.data && node.data.path !== newPath) {
+    if (node.data.path !== newPath) {
         return {
             ...node,
             data: {
