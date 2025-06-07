@@ -34,7 +34,7 @@ const AppLayout = () => {
     workspaces,
     isLoadingWorkspaces,
     isLoadingManifest,
-    isLoadingWorkspaceContents 
+    isLoadingWorkspaceContents,
   } = useWorkspace();
 
   const isContentLoading = useMemo(() => {

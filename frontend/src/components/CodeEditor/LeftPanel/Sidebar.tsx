@@ -41,7 +41,12 @@ const defaultFileTree: NodeModel<FileSystemNodeData>[] = [
 
 export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const { isSignedIn } = useAuth();
-  const { selectedWorkspace, currentWorkspaceManifest } = useWorkspace();
+  const { 
+    selectedWorkspace, 
+    currentWorkspaceManifest, 
+    addFileToCache,
+    renamePathInCache 
+  } = useWorkspace();
   const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>([]);
   const [selectedNodePath, setSelectedNodePath] = useState<string | null>(null); 
   
@@ -96,20 +101,34 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   }, [treeData, isSignedIn, onFileSelect, activeFile]);
 
   const handleDrop = (newTree: NodeModel<FileSystemNodeData>[], options: { dragSource?: NodeModel<FileSystemNodeData>; dropTargetId?: NodeModel['id'] }) => {
+    const { dragSource } = options;
+    if (!dragSource?.data) {
+      setTreeData(newTree); // Fallback for safety
+      return;
+    }
+
+    const oldPath = dragSource.data.path;
     const treeWithUpdatedPaths = updateAllPaths(newTree);
+    const draggedNodeAfterDrop = treeWithUpdatedPaths.find(n => n.id === dragSource.id);
+    const newPath = draggedNodeAfterDrop?.data?.path;
+
+    if (newPath && oldPath !== newPath) {
+      renamePathInCache(oldPath, newPath);
+    }
+    
+    // Update the UI with the new tree structure
     setTreeData(treeWithUpdatedPaths);
 
-    if (options.dragSource && activeFile && options.dragSource.data?.path === activeFile) {
-      const draggedNodeAfterDrop = treeWithUpdatedPaths.find(n => n.id === options.dragSource!.id);
-      if (draggedNodeAfterDrop && draggedNodeAfterDrop.data?.type === 'file' && draggedNodeAfterDrop.data.path !== activeFile) {
-        onFileSelect(draggedNodeAfterDrop.data.path);
-      }
+    // If the active file was the one dragged (or inside the dragged folder), update its path
+    if (activeFile.startsWith(oldPath)) {
+      const updatedActiveFile = activeFile.replace(oldPath, newPath || '');
+      onFileSelect(updatedActiveFile);
     }
-    if (options.dragSource && selectedNodePath && options.dragSource.data?.path === selectedNodePath) {
-      const draggedNodeAfterDrop = treeWithUpdatedPaths.find(n => n.id === options.dragSource!.id);
-      if (draggedNodeAfterDrop && draggedNodeAfterDrop.data) {
-        setSelectedNodePath(draggedNodeAfterDrop.data.path); 
-      }
+    
+    // Also update the selected node path if it was affected by the drag
+    if (selectedNodePath && selectedNodePath.startsWith(oldPath)) {
+      const updatedSelectedNodePath = selectedNodePath.replace(oldPath, newPath || '');
+      setSelectedNodePath(updatedSelectedNodePath);
     }
   };
   
@@ -146,12 +165,41 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       return;
     }
 
-    setTreeData(prevTreeData => {
-      const newTree = prevTreeData.map(node => 
-        node.id === nodeId ? { ...node, text: newName, data: { ...node.data!, isEditing: false } } : node
-      );
-      return updateAllPaths(newTree); 
-    });
+    const nodeBeingRenamed = treeData.find(n => n.id === nodeId);
+    if (!nodeBeingRenamed?.data) return;
+
+    const oldPath = nodeBeingRenamed.data.path;
+    const isNewNode = nodeBeingRenamed.text === "";
+
+    const newTreeData = treeData.map(node => 
+      node.id === nodeId ? { ...node, text: newName, data: { ...node.data!, isEditing: false } } : node
+    );
+    const treeWithUpdatedPaths = updateAllPaths(newTreeData);
+    
+    const newNode = treeWithUpdatedPaths.find(n => n.id === nodeId);
+    const newPath = newNode?.data?.path;
+
+    if (!newPath) {
+      setEditingNodeId(null);
+      return;
+    }
+    
+    if (isNewNode) {
+      if (newNode.data?.type === 'file') {
+        addFileToCache(newPath);
+      }
+    } else { 
+      if (oldPath !== newPath) {
+        renamePathInCache(oldPath, newPath);
+      }
+    }
+    
+    if (activeFile.startsWith(oldPath)) {
+      const updatedActiveFile = activeFile.replace(oldPath, newPath);
+      onFileSelect(updatedActiveFile);
+    }
+
+    setTreeData(treeWithUpdatedPaths);
     setEditingNodeId(null);
   };
 

@@ -218,10 +218,6 @@ export async function executeCodeAuth(
   currentLocalManifestItems: WorkspaceFileManifestItem[],
   currentLocalWorkspaceVersion: string
 ): Promise<ExecuteCodeAuthResponse> {
-  console.log(
-    `Starting executeCodeAuth for workspace: ${workspaceId} with version: ${currentLocalWorkspaceVersion}`
-  );
-
   // 1. Determine local changes to create the initial sync request
   const localManifestMap = new Map(
     currentLocalManifestItems.map((item) => [item.filePath, item])
@@ -260,11 +256,8 @@ export async function executeCodeAuth(
     }
   }
 
-  if (localSyncStates.length === 0) {
-    console.log("No file changes detected. Proceeding directly to execution.");
-  } else {
+  if (localSyncStates.length > 0) {
     // 2. First phase of 2PC: Call /sync to get actions
-    console.log("Syncing with server...", localSyncStates);
     const syncRequest: SyncRequestAPI = {
       workspaceVersion: currentLocalWorkspaceVersion,
       files: localSyncStates,
@@ -290,7 +283,6 @@ export async function executeCodeAuth(
       (a) => a.actionRequired === "upload"
     );
     if (uploadActions.length > 0) {
-      console.log(`Uploading ${uploadActions.length} files...`);
       const uploadPromises = uploadActions.map((action) => {
         const fileToUpload = editorFileMap.get(action.filePath);
         if (fileToUpload && action.presignedUrl) {
@@ -307,7 +299,6 @@ export async function executeCodeAuth(
         );
       });
       await Promise.all(uploadPromises);
-      console.log("All uploads completed.");
     }
 
     // 4. Second phase of 2PC: Call /sync/confirm
@@ -341,7 +332,6 @@ export async function executeCodeAuth(
       ).filter(action => action !== null) as FileActionAPI[];
 
       if (confirmActions.length > 0) {
-        console.log("Confirming sync with server...", confirmActions);
         const confirmRequest: ConfirmSyncRequestAPI = {
           workspaceVersion: syncResponse.newWorkspaceVersion,
           syncActions: confirmActions,
@@ -357,16 +347,11 @@ export async function executeCodeAuth(
             confirmResponse.errorMessage || "Failed to confirm sync."
           );
         }
-        console.log(
-          "Sync confirmed. New workspace version:",
-          confirmResponse.finalWorkspaceVersion
-        );
       }
     }
   }
 
   // 5. Execute code
-  console.log("Proceeding to execute code with details:", executionDetails);
   const response = await fetch(
     `${API_BASE_URL}/api/workspaces/${workspaceId}/execute`,
     {

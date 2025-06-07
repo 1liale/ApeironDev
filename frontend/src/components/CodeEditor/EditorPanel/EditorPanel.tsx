@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from 'monaco-editor';
 import { useCodeExecutionContext } from "@/contexts/CodeExecutionContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 interface EditorPanelProps {
   activeFile: string;
@@ -18,6 +19,7 @@ export const EditorPanel = ({
   // Use the editorRef from the context. 
   // The context provider initializes it, and we assign the actual editor instance to it onMount.
   const { editorRef, setActiveFileForExecution } = useCodeExecutionContext();
+  const { selectedWorkspace, updateFileContent } = useWorkspace();
   // Use the specific type for the local ref for strong typing within this component
   const localEditorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
 
@@ -60,6 +62,12 @@ export const EditorPanel = ({
     }
   };
 
+  const handleEditorChange = (value: string | undefined) => {
+    if (value !== undefined && activeFile && selectedWorkspace) {
+      updateFileContent(activeFile, value);
+    }
+  };
+
   // Update editor content when activeFile or initialContent changes
   // This ensures if the file is changed from sidebar, editor updates.
   useEffect(() => {
@@ -89,6 +97,7 @@ export const EditorPanel = ({
           defaultValue={initialContent || `# ${activeFile || 'Untitled'}\n\n# Start coding...`}
           theme={isDark ? 'vs-dark' : 'vs'}
           onMount={handleEditorDidMount}
+          onChange={handleEditorChange}
           // The key prop can help force re-mount if truly needed, but typically not for content changes.
           // key={activeFile} 
           options={{

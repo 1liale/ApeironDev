@@ -43,6 +43,9 @@ interface WorkspaceContextActions {
   createNewWorkspace: (name: string) => Promise<WorkspaceSummaryItem | null>;
   refreshWorkspace: (workspace: WorkspaceSummaryItem) => Promise<void>;
   setWorkspaceVersion: (version: string | number) => void;
+  updateFileContent: (filePath: string, newContent: string) => void;
+  addFileToCache: (filePath: string) => void;
+  renamePathInCache: (oldPath: string, newPath: string) => void;
 }
 
 export type WorkspaceContextType = WorkspaceContextState & WorkspaceContextActions;
@@ -55,7 +58,7 @@ const SESSION_STORAGE_WORKSPACES_KEY = 'app_workspaces';
 const SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY = 'app_selected_workspace_id';
 
 export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { getToken, isSignedIn, userId } = useAuth();
+  const { isSignedIn, userId } = useAuth();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummaryItem[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummaryItem | null>(null);
   const [currentWorkspaceManifest, setCurrentWorkspaceManifest] = useState<WorkspaceFileManifestItem[] | null>(null);
@@ -208,6 +211,69 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   }, [selectedWorkspace]);
 
+  const updateFileContent = useCallback((filePath: string, newContent: string) => {
+    if (!selectedWorkspace) return;
+
+    setFileContentCache(prevCache => ({
+      ...prevCache,
+      [selectedWorkspace.workspaceId]: {
+        ...(prevCache[selectedWorkspace.workspaceId] || {}),
+        [filePath]: newContent,
+      },
+    }));
+  }, [selectedWorkspace]);
+
+  const addFileToCache = useCallback((filePath: string) => {
+    if (!selectedWorkspace) return;
+
+    setFileContentCache(prevCache => {
+      // Ensure we don't accidentally overwrite something.
+      if (prevCache[selectedWorkspace.workspaceId]?.[filePath] !== undefined) {
+        return prevCache;
+      }
+      return {
+        ...prevCache,
+        [selectedWorkspace.workspaceId]: {
+          ...(prevCache[selectedWorkspace.workspaceId] || {}),
+          [filePath]: '', // Initialize with empty content
+        },
+      };
+    });
+  }, [selectedWorkspace]);
+
+  const renamePathInCache = useCallback((oldPath: string, newPath: string) => {
+    if (!selectedWorkspace) return;
+
+    setFileContentCache(prevCache => {
+      const workspaceCache = prevCache[selectedWorkspace.workspaceId];
+      if (!workspaceCache) return prevCache;
+      
+      const newWorkspaceCache = { ...workspaceCache };
+      
+      // Handle file rename
+      if (newWorkspaceCache[oldPath] !== undefined) {
+        newWorkspaceCache[newPath] = newWorkspaceCache[oldPath];
+        delete newWorkspaceCache[oldPath];
+      } else {
+        // Handle folder rename by checking for path prefixes
+        const oldPathPrefix = oldPath + '/';
+        const newPathPrefix = newPath + '/';
+        Object.keys(newWorkspaceCache).forEach(key => {
+          if (key.startsWith(oldPathPrefix)) {
+            const newKey = newPathPrefix + key.substring(oldPathPrefix.length);
+            newWorkspaceCache[newKey] = newWorkspaceCache[key];
+            delete newWorkspaceCache[key];
+          }
+        });
+      }
+
+      return {
+        ...prevCache,
+        [selectedWorkspace.workspaceId]: newWorkspaceCache,
+      };
+    });
+  }, [selectedWorkspace]);
+
   // New effect to handle fetching data when a workspace is selected
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -287,6 +353,9 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     createNewWorkspace,
     refreshWorkspace,
     setWorkspaceVersion,
+    updateFileContent,
+    addFileToCache,
+    renamePathInCache,
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
