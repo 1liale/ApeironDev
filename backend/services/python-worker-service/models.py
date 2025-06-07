@@ -1,11 +1,15 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
 class CloudTaskPayload(BaseModel):
     job_id: str
     code: str
     language: str # Language field, though python-worker only handles python
     input: Optional[str] = None
+
+class WorkerFile(BaseModel):
+    r2_object_key: str = Field(..., alias="r2_object_key")
+    file_path: str = Field(..., alias="file_path")
 
 class CloudTaskAuthPayload(BaseModel):
     job_id: str
@@ -14,6 +18,7 @@ class CloudTaskAuthPayload(BaseModel):
     language: str
     input: Optional[str] = None
     r2_bucket_name: str
+    files: List[WorkerFile]
 
 # Optional: A common model for updating Firestore job status
 class JobStatusUpdate(BaseModel):

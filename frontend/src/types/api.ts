@@ -28,12 +28,12 @@ export interface CreateWorkspaceRequestBody {
   name: string;
 }
 
-export interface CreateWorkspaceResponse { // Renamed from Workspace to be more specific
+export interface CreateWorkspaceResponse {
   workspaceId: string;
-  name:string;
+  name: string;
   createdBy: string;
   createdAt: string; // ISO 8601 date string
-  initialVersion: string | number; // Added initial version for new workspaces
+  initialVersion: string;
 }
 
 // Represents the summary of a workspace for listing purposes
@@ -45,111 +45,90 @@ export interface WorkspaceSummaryItem {
   userRole: string;  // Role of the current user in this workspace
 }
 
-// ====== File, Manifest, and Content Types ======
+// ====== File and Manifest Types ======
 export interface WorkspaceFileManifestItem {
-  filePath: string; // Changed from path for clarity
+  fileId: string;
+  filePath: string;
   r2ObjectKey: string;
   size?: number;
-  contentType?: string;
-  hash?: string; // Hash of the file content
-  contentUrl: string; // Presigned URL to fetch content directly from R2 - replacing downloadUrl
+  hash?: string;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  contentUrl: string; // Presigned URL
 }
 
 export interface WorkspaceManifestResponse {
   manifest: WorkspaceFileManifestItem[];
-  workspaceVersion: string | number; // Version of the workspace manifest itself
+  workspaceVersion: string;
 }
 
 // Represents client's view of a single file's content (primarily for local state)
 export interface ClientFileState {
   filePath: string;
   content: string;
-  // Potentially add localHash, isDirty, etc.
 }
 
-
-// ====== Sync Process Types (Client -> Server) ======
+// ====== Sync Process Types (Phase 1: Client -> Server -> Client) ======
 
 // Represents the state of a file as known by the client, to be sent to the /sync endpoint.
 export interface SyncFileClientStateAPI {
   filePath: string;
-  clientHash: string; // Hash of the current client-side content for 'new' or 'modified' files.
-  // lastKnownServerHash?: string; // Optional: Could be useful for more advanced sync logic
-  action: 'new' | 'modified' | 'deleted' | 'unchanged';
+  clientHash?: string;
+  action: "new" | "modified" | "deleted" | "unchanged";
 }
 
 export interface SyncRequestAPI {
-  workspaceVersion: string | number; // Client's current workspace version for OCC
+  workspaceVersion: string;
   files: SyncFileClientStateAPI[];
 }
-
-// ====== Sync Process Types (Server -> Client) ======
 
 // Represents an action the client needs to take for a file, received from /sync endpoint.
 export interface SyncResponseFileActionAPI {
   filePath: string;
-  r2ObjectKey?: string; // May not be needed if client doesn't construct this
-  actionRequired: 'upload' | 'delete' | 'none' | 'conflict'; // Added 'conflict'
-  presignedUrl?: string; // For uploads
-  serverVersion?: string | number; // If conflict, server provides current version
-  serverContent?: string; // Optional: If conflict, server provides current content for merging
+  fileId?: string;
+  r2ObjectKey: string;
+  actionRequired: "upload" | "delete" | "none";
+  presignedUrl?: string;
   message?: string;
 }
 
 export interface SyncResponseAPI {
-  newWorkspaceVersion?: string | number; // The new version after successful preliminary sync
+  status: "pending_confirmation" | "workspace_conflict" | "no_changes" | "error";
   actions: SyncResponseFileActionAPI[];
-  // Global status like 'needs_confirmation', 'conflict', 'success_no_changes'
-  status: 'pending_confirmation' | 'workspace_conflict' | 'no_changes' | 'error'; 
+  newWorkspaceVersion?: string;
   errorMessage?: string;
 }
 
-// ====== Confirm Sync Process Types ======
+// ====== Sync Process Types (Phase 2: Client -> Server) ======
 
-// Represents a single item in the /sync/confirm request.
-export interface ConfirmSyncFileItemAPI {
+export interface FileActionAPI {
   filePath: string;
-  r2ObjectKey: string; // Provided by server in SyncResponseFileActionAPI if action is 'upload'
-  actionConfirmed: 'uploaded' | 'deleted';
-  status: 'success' | 'failed'; // Status of the operation (e.g., upload to R2)
-  clientHash?: string; // Hash of the content that was successfully uploaded.
-  size?: number;
-  contentType?: string;
-  error?: string; // Error message if R2 operation failed for this specific file.
+  fileId: string;
+  r2ObjectKey: string;
+  action: "upsert" | "delete";
+  clientHash?: string; // For "upsert"
+  size?: number; // For "upsert"
 }
 
 export interface ConfirmSyncRequestAPI {
-  newWorkspaceVersion: string | number; // The new version to be set
-  baseVersion: string | number; // The version the sync started from
-  actions: ConfirmSyncFileItemAPI[]; // The actions performed by the client
-}
-
-// Represents a single item in the /sync/confirm response.
-export interface ConfirmSyncResponseItemAPI {
-  filePath: string;
-  status: string; // e.g., "metadata_updated", "metadata_created", "metadata_deleted", etc.
-  fileId?: string; // If you use persistent file IDs in a DB
-  message?: string;
+  workspaceVersion: string;
+  syncActions: FileActionAPI[];
 }
 
 export interface ConfirmSyncResponseAPI {
-  finalWorkspaceVersion: string | number; // The definitive new version after all confirmations
-  results: ConfirmSyncResponseItemAPI[];
-  // Overall status: 'success', 'partial_failure', 'total_failure'
-  status: 'success' | 'partial_failure' | 'error'; 
+  status: "success" | "error";
+  finalWorkspaceVersion?: string;
   errorMessage?: string;
 }
-
 
 // ====== Authenticated Execution ======
 export interface ExecuteAuthRequestBody {
   language: string;
-  entrypointFile: string; // file path relative to workspace root
+  entrypointFile: string;
   input?: string;
-  // Potentially: workspaceId if not inferred from route/token scope
 }
 
 export interface ExecuteCodeAuthResponse {
-  executionResponse: ExecuteResponse;
-  newWorkspaceVersion?: string | number;
+  message: string;
+  job_id: string;
 } 
