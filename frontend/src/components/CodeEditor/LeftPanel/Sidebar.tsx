@@ -45,6 +45,8 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>([]);
   const [selectedNodePath, setSelectedNodePath] = useState<string | null>(null); 
   
+  const isWorkspaceActionsDisabled = !isSignedIn || !selectedWorkspace;
+  
   // Effect 1: Rebuild the file tree only when the workspace or manifest changes.
   useEffect(() => {
     if (isSignedIn) {
@@ -112,15 +114,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   };
   
   const [openNodeIds, setOpenNodeIds] = useState<Array<NodeModel['id']>>([]);
-  const handleNodeToggleInternal = (nodeId: NodeModel['id']) => {
-    setOpenNodeIds(prevOpenIds => {
-      if (prevOpenIds.includes(nodeId)) {
-        return prevOpenIds.filter(id => id !== nodeId);
-    } else {
-        return [...prevOpenIds, nodeId];
-      }
-  });
-};
+  
 
   const handleNodeClick = (node: NodeModel<FileSystemNodeData>) => {
     setSelectedNodePath(node.data!.path);
@@ -172,8 +166,8 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   };
   
   const handleAddFileOrFolder = (type: 'file' | 'folder', parentId: NodeModel['id'] | null = null) => {
-    if (!isSignedIn) {
-      toast.warning("Please sign in to add files or folders.");
+    if (isWorkspaceActionsDisabled) {
+      toast.warning("Please create or select a workspace to add files or folders.");
       return;
     }
     const newId = Date.now(); 
@@ -243,7 +237,6 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
           <h3 className="text-sm font-semibold text-sidebar-foreground uppercase tracking-wide">Files</h3>
         </div>
       <DndProvider backend={MultiBackend} options={getBackendOptions()}>
- 
           <Tree
             tree={treeData}
             rootId={0}
@@ -252,10 +245,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
                 node={node}
                 depth={depth}
                 isOpen={isOpen}
-                onToggle={() => { 
-                  onToggle();
-                  handleNodeToggleInternal(node.id);
-                }}
+                onToggle={onToggle}
                 activeFile={activeFile}
                 selectedNodePath={selectedNodePath}
                 onNodeClick={handleNodeClick}
@@ -274,16 +264,17 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
             )}
             onDrop={handleDrop}
             classes={{
-              root: "h-full p-2 overflow-auto"
+              root: "flex-grow overflow-y-auto p-2",
+              draggingSource: "opacity-70",
+              dropTarget: "bg-sidebar-accent",
             }}
           />
-    
       </DndProvider>
       <div className="p-2 border-t border-sidebar-border flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 flex-shrink-0">
           <div className="relative w-full group">
             <Button 
               onClick={() => handleAddFileOrFolder('file')}
-              disabled={!isSignedIn}
+              disabled={isWorkspaceActionsDisabled}
               className={cn(
                 "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
                 !isSignedIn && "opacity-50 cursor-not-allowed"
@@ -296,7 +287,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
           <div className="relative w-full group">
             <Button 
               onClick={() => handleAddFileOrFolder('folder')}
-              disabled={!isSignedIn}
+              disabled={isWorkspaceActionsDisabled}
               className={cn(
                 "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
                 !isSignedIn && "opacity-50 cursor-not-allowed"
