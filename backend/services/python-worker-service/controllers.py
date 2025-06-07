@@ -177,6 +177,8 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
                 objects_list.extend(response.get('Contents', []))
                 if not response.get('IsTruncated'): break
                 continuation_token = response.get('NextContinuationToken')
+            
+            logger.info(f"Job {job_id}: Found {len(objects_list)} R2 objects for workspace {payload.workspace_id}.")
 
             if not objects_list:
                 msg = f"No files found in R2 at {r2_prefix}"
@@ -196,16 +198,21 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
                 local_file.parent.mkdir(parents=True, exist_ok=True) # Create subdirectories if they don't exist
                 s3_client.download_file(payload.r2_bucket_name, s3_key, str(local_file))
             
-            entrypoint_script_local_path = workspace_exec_dir / payload.entrypoint_file
+            entrypoint_script_local_path = workspace_exec_dir / payload.entrypoint_file.lstrip('/')
+            logger.info(f"Job {job_id}: Checking for entrypoint at resolved path: {entrypoint_script_local_path}")
+            
             # Verify the specified entrypoint file exists locally after download
             if not entrypoint_script_local_path.is_file():
-                msg = f"Entrypoint '{payload.entrypoint_file}' not found in downloaded workspace."
+                msg = f"Entrypoint '{payload.entrypoint_file}' not found in downloaded workspace. Checked path: {entrypoint_script_local_path}"
+                logger.error(f"Job {job_id}: {msg}")
                 final_job_data = _build_final_update_data(3, None, msg, initial_status)
                 _update_firestore_job_status(job_id, job_doc_ref, final_job_data, "final results - entrypoint missing")
                 return {"job_id": job_id, "message": msg, "final_status": "failed"}
 
             # Update Firestore status before running the code
             _update_firestore_job_status(job_id, job_doc_ref, {"status": "running_auth_workspace", "updated_at": datetime.now(timezone.utc)}, "running code")
+            
+            logger.info(f"Job {job_id}: Executing 'python3 {payload.entrypoint_file}' in '{workspace_exec_dir}'")
             # Execute the Python script from the temporary directory
             output, error_details, exec_status_code = _execute_python_script_in_dir(
                 job_id, Path(payload.entrypoint_file), workspace_exec_dir, payload.input 
@@ -227,8 +234,3 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
             # Log critical failure if Firestore update fails after an unhandled exception
             logger.critical(f"Job {job_id}: CRITICAL - FAILED TO UPDATE Firestore after unhandled exception: {firestore_e}")
         raise HTTPException(status_code=500, detail=f"Internal error processing job {job_id}.")
-
-@router.get("/")
-async def health_check_endpoint():
-    logger.info("Health check / called.")
-    return {"status": "Python Worker Service is running (FastAPI)"} 

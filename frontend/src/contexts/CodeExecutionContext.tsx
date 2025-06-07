@@ -191,7 +191,8 @@ export const CodeExecutionProvider = ({
 
     setIsExecuting(true);
     setConsoleOutput((prev) => [...prev, "Executing code..."]);
-
+    toast.info(`Starting execution for entrypoint ${activeFileForExecution}...`);
+    
     if (isSignedIn && selectedWorkspace) {
       // --- AUTHENTICATED EXECUTION ---
       try {
@@ -232,9 +233,6 @@ export const CodeExecutionProvider = ({
           currentWorkspaceManifest,
           currentWorkspaceVersion
         );
-        toast.info(
-          `Authenticated execution started for ${activeFileForExecution} in ${selectedWorkspace.name}.`
-        );
 
         if (newWorkspaceVersion && newWorkspaceVersion !== currentWorkspaceVersion) {
           console.log(`Workspace version updated from ${currentWorkspaceVersion} to ${newWorkspaceVersion}.`);
@@ -272,7 +270,6 @@ export const CodeExecutionProvider = ({
           code,
           input: consoleInputValue,
         });
-        toast.info(`Anonymous execution started for ${activeFileForExecution}.`);
         
         if (response.error || !response.job_id) {
           handleJobCompletionOrFailure(`Error: ${response.error || "Failed to start execution."}`);
