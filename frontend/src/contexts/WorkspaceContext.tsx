@@ -101,7 +101,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       const cachePayload: CachedWorkspaces = { userId, workspaces: fetchedWorkspaces };
       sessionStorage.setItem(SESSION_STORAGE_WORKSPACES_KEY, JSON.stringify(cachePayload));
-      toast.info('Workspaces loaded from server.');
 
     } catch (error) {
       console.error('Failed to fetch workspaces:', error);
@@ -121,7 +120,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
             // Valid cache for the current user exists
             const loadedWorkspaces = cachedData.workspaces;
             setWorkspaces(loadedWorkspaces);
-            toast.info('Workspaces loaded from cache.');
 
             // Restore selected workspace from session storage
             const lastSelectedId = sessionStorage.getItem(SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY);
@@ -156,7 +154,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     setCurrentWorkspaceManifest(null); 
     setCurrentWorkspaceVersion(null);
     try {
-      toast.info(`Refreshing workspace: ${name}...`);
       const token = await auth.currentUser.getIdToken();
       if (!token) throw new Error('Authentication token not available.');
       
@@ -166,7 +163,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
       setManifestAndVersionCache(prev => ({ ...prev, [workspaceId]: { manifest, version: workspaceVersion } }));
       setCurrentWorkspaceManifest(manifest);
       setCurrentWorkspaceVersion(workspaceVersion);
-      toast.success(`Manifest for "${name}" refreshed.`);
 
       if (manifest && manifest.length > 0) {
         setIsLoadingWorkspaceContents(true);
@@ -184,7 +180,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
           ...prevCache,
           [workspaceId]: { ...(prevCache[workspaceId] || {}), ...newFileContents },
         }));
-        toast.info(`All files for "${name}" re-synced.`);
         setIsLoadingWorkspaceContents(false);
       } else {
          setFileContentCache(prevCache => ({ ...prevCache, [workspaceId]: {} }));

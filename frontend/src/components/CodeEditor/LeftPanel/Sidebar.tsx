@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   FilePlus,
   FolderPlus,
@@ -14,31 +14,85 @@ import {
 import { FileTreeNode } from "./FileTreeNode"; 
 import { CustomDragPreview } from "./CustomDragPreview"; 
 import type { FileSystemNodeData } from "@/types/filesystem"; 
-import { updateAllPaths, initializeTreeWithFileSystemNodeData } from "@/lib/filesystem";
+import { updateAllPaths, buildFileTree } from "@/lib/filesystem";
 import { useAuth } from "@clerk/react-router";
 import { toast } from "@/components/ui/sonner"; 
 import { cn } from "@/lib/utils"; 
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 interface SidebarProps {
   activeFile: string;
   onFileSelect: (file: string) => void;
 }
 
-// Define the initial default file structure directly
-const initialDefaultFile: NodeModel[] = [
+const defaultFileTree: NodeModel<FileSystemNodeData>[] = [
   {
     id: 1,
     parent: 0,
     droppable: false,
     text: "main.py",
+    data: {
+      type: 'file',
+      path: 'main.py',
+      isEditing: false,
+    }
   },
 ];
 
 export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const { isSignedIn } = useAuth();
-  const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>(() => initializeTreeWithFileSystemNodeData(initialDefaultFile));
-  const [selectedNodePath, setSelectedNodePath] = useState<string | null>("/main.py"); 
+  const { selectedWorkspace, currentWorkspaceManifest } = useWorkspace();
+  const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>([]);
+  const [selectedNodePath, setSelectedNodePath] = useState<string | null>(null); 
   
+  // Effect 1: Rebuild the file tree only when the workspace or manifest changes.
+  useEffect(() => {
+    if (isSignedIn) {
+      if (selectedWorkspace && currentWorkspaceManifest) {
+        setTreeData(buildFileTree(currentWorkspaceManifest));
+      } else {
+        // Auth user, but no workspace selected or manifest loading.
+        setTreeData([]);
+      }
+    } else {
+      // Unauthenticated user always sees the default file.
+      setTreeData(defaultFileTree);
+    }
+  }, [isSignedIn, selectedWorkspace, currentWorkspaceManifest]);
+
+  // Effect 2: Handle file selection logic when the tree or user session changes.
+  useEffect(() => {
+    if (isSignedIn) {
+      // For authenticated users, logic depends on the state of the tree.
+      if (treeData.length > 0) {
+        const currentActiveNode = treeData.find(n => n.data?.path === activeFile);
+        // If the active file isn't in the current tree, select the first file.
+        if (!currentActiveNode) {
+          const firstFile = treeData.find(node => node.data?.type === 'file');
+          if (firstFile?.data?.path) {
+            onFileSelect(firstFile.data.path);
+            setSelectedNodePath(firstFile.data.path);
+          } else {
+            // The tree has folders but no files.
+            onFileSelect('');
+            setSelectedNodePath(null);
+          }
+        } else {
+          // The active file is valid, just ensure it's marked as selected.
+          setSelectedNodePath(activeFile);
+        }
+      } else {
+        // The tree is empty (new workspace or no files).
+        onFileSelect('');
+        setSelectedNodePath(null);
+      }
+    } else {
+      // For unauthenticated users, always select main.py.
+      onFileSelect('main.py');
+      setSelectedNodePath('main.py');
+    }
+  }, [treeData, isSignedIn, onFileSelect, activeFile]);
+
   const handleDrop = (newTree: NodeModel<FileSystemNodeData>[], options: { dragSource?: NodeModel<FileSystemNodeData>; dropTargetId?: NodeModel['id'] }) => {
     const treeWithUpdatedPaths = updateAllPaths(newTree);
     setTreeData(treeWithUpdatedPaths);
@@ -118,6 +172,10 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   };
   
   const handleAddFileOrFolder = (type: 'file' | 'folder', parentId: NodeModel['id'] | null = null) => {
+    if (!isSignedIn) {
+      toast.warning("Please sign in to add files or folders.");
+      return;
+    }
     const newId = Date.now(); 
     const targetParentId = parentId === null ? 0 : parentId;
 
@@ -207,7 +265,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
                 onEditCancel={handleEditCancel}
                 onDeleteNode={handleDeleteNode}
                 onAddFileToFolder={(folderId) => handleAddFileOrFolder('file', folderId)}
-                isDefaultFile={node.id === 1}
+                isDefaultFile={!isSignedIn && node.id === 1}
                 isSignedIn={isSignedIn ?? false}
               />
             )}
@@ -224,13 +282,8 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       <div className="p-2 border-t border-sidebar-border flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 flex-shrink-0">
           <div className="relative w-full group">
             <Button 
-              onClick={() => {
-                if (!isSignedIn) {
-                  toast.warning("Please sign in to add a new file.");
-                } else {
-                  handleAddFileOrFolder('file');
-                }
-              }}
+              onClick={() => handleAddFileOrFolder('file')}
+              disabled={!isSignedIn}
               className={cn(
                 "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
                 !isSignedIn && "opacity-50 cursor-not-allowed"
@@ -242,13 +295,8 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
           </div>
           <div className="relative w-full group">
             <Button 
-              onClick={() => {
-                if (!isSignedIn) {
-                  toast.warning("Please sign in to add a new folder.");
-                } else {
-                  handleAddFileOrFolder('folder');
-                }
-              }} 
+              onClick={() => handleAddFileOrFolder('folder')}
+              disabled={!isSignedIn}
               className={cn(
                 "flex items-center justify-center w-full px-3 py-2 text-sm font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent-foreground hover:text-sidebar-foreground rounded-md",
                 !isSignedIn && "opacity-50 cursor-not-allowed"
