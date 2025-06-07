@@ -14,7 +14,6 @@ import (
 	cloudtaskspb "cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -339,42 +338,11 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		return
 	}
 
-	form, err := c.MultipartForm()
-	if err != nil {
-		logCtx.WithError(err).Warn("Failed to parse multipart form.")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid form data: " + err.Error()})
+	var req ConfirmSyncRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		logCtx.WithError(err).Warn("Failed to bind JSON for ConfirmSync.")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
-	}
-	defer form.RemoveAll()
-
-	metadataJSON := c.Request.FormValue("metadata")
-	var metadataReq ConfirmSyncRequest
-	if err := json.Unmarshal([]byte(metadataJSON), &metadataReq); err != nil {
-		logCtx.WithError(err).Warn("Failed to unmarshal sync metadata.")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sync metadata: " + err.Error()})
-		return
-	}
-
-	fileMetadatas := make(map[string]FileMetadata)
-	for _, file := range metadataReq.Actions {
-		if file.ActionConfirmed == "upload" {
-			originalFilename := file.FilePath
-			fileID := uuid.New().String()
-			sanitizedFilePath := filepath.Clean(file.FilePath)
-			r2ObjectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", workspaceID, fileID, sanitizedFilePath)
-
-			fileMetadatas[originalFilename] = FileMetadata{
-				FileID:      fileID,
-				FilePath:    file.FilePath,
-				R2ObjectKey: r2ObjectKey,
-				Hash:        file.ClientHash,
-				Size:        file.Size,
-				ContentType: file.ContentType,
-				WorkspaceID: workspaceID,
-				UserID:      userID,
-			}
-			logCtx.Infof("Prepared metadata for '%s' with R2 key '%s'", originalFilename, r2ObjectKey)
-		}
 	}
 
 	err = ac.FirestoreClient.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
@@ -383,7 +351,7 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		if err != nil {
 			return fmt.Errorf("failed to get workspace for version increment: %w", err)
 		}
-		
+
 		currentVersionStr := "0"
 		if version, err := wsDocSnap.DataAt("workspace_version"); err == nil {
 			if v, ok := version.(string); ok {
@@ -391,8 +359,8 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 			}
 		}
 
-		if currentVersionStr != metadataReq.BaseVersion {
-			return fmt.Errorf("transaction version conflict: client base version %s does not match server version %s", metadataReq.BaseVersion, currentVersionStr)
+		if currentVersionStr != req.BaseVersion {
+			return fmt.Errorf("transaction version conflict: client base version %s does not match server version %s", req.BaseVersion, currentVersionStr)
 		}
 
 		newVersion, _ := strconv.Atoi(currentVersionStr)
@@ -409,52 +377,65 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 
 		filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
 
-		for _, formFileHeader := range form.File["files"] {
-			originalFilename := formFileHeader.Filename
-			fileMetadata, ok := fileMetadatas[originalFilename]
-			if !ok {
-				logCtx.Warnf("Skipping file '%s' as no corresponding metadata was found.", originalFilename)
-				continue
+		for _, action := range req.Actions {
+			if action.ActionConfirmed != "uploaded" && action.ActionConfirmed != "deleted" {
+				continue // Skip actions that don't require server-side changes
 			}
 
-			formFile, err := formFileHeader.Open()
-			if err != nil {
-				return fmt.Errorf("failed to open file %s from form: %w", originalFilename, err)
-			}
-			defer formFile.Close()
+			if action.ActionConfirmed == "uploaded" {
+				fileID := uuid.New().String()
+				// The R2 object key is now passed from the client, which got it from the 'sync' phase.
+				// We no longer generate it here, but we could add a validation step if needed.
+				fileMetadata := FileMetadata{
+					FileID:      fileID,
+					FilePath:    action.FilePath,
+					R2ObjectKey: action.R2ObjectKey,
+					Hash:        action.ClientHash,
+					Size:        action.Size,
+					ContentType: action.ContentType,
+					WorkspaceID: workspaceID,
+					UserID:      userID,
+					UpdatedAt:   time.Now().UTC(),
+				}
 
-			uploader := manager.NewUploader(ac.R2S3Client)
-			_, err = uploader.Upload(ctx, &s3.PutObjectInput{
-				Bucket:      aws.String(ac.R2BucketName),
-				Key:         aws.String(fileMetadata.R2ObjectKey),
-				Body:        formFile,
-				ContentType: aws.String(fileMetadata.ContentType),
-			})
-			if err != nil {
-				return fmt.Errorf("failed to upload %s to R2: %w", originalFilename, err)
+				query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", action.FilePath).Limit(1)
+				docs, err := tx.Documents(query).GetAll()
+				if err != nil {
+					return fmt.Errorf("failed to query existing file for modification %s: %w", action.FilePath, err)
+				}
+				
+				if len(docs) > 0 {
+					// It's a modification, update existing document
+					fileDocRef := docs[0].Ref
+					fileMetadata.FileID = fileDocRef.ID // Keep the original FileID
+					// Preserve original creation timestamp
+					var existingMeta FileMetadata
+					if err := docs[0].DataTo(&existingMeta); err == nil {
+						fileMetadata.CreatedAt = existingMeta.CreatedAt
+					} else {
+						fileMetadata.CreatedAt = time.Now().UTC()
+					}
+					err = tx.Set(fileDocRef, fileMetadata)
+				} else {
+					// It's a new file, create new document
+					fileMetadata.CreatedAt = time.Now().UTC()
+					fileDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(fileID)
+					err = tx.Set(fileDocRef, fileMetadata)
+				}
+				if err != nil {
+					return fmt.Errorf("failed to set file metadata for %s in transaction: %w", action.FilePath, err)
+				}
+				logCtx.Infof("Successfully confirmed metadata for uploaded file '%s'.", action.FilePath)
 			}
-			
-			query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", fileMetadata.FilePath).Limit(1)
-			docs, err := tx.Documents(query).GetAll()
-			if err != nil {
-				return fmt.Errorf("failed to query existing file for modification %s: %w", fileMetadata.FilePath, err)
-			}
-			
-			if len(docs) > 0 {
-				fileDocRef := docs[0].Ref
-				err = tx.Set(fileDocRef, fileMetadata)
-			} else {
-				fileDocRef := ac.FirestoreClient.Collection(filesCollectionPath).Doc(fileMetadata.FileID)
-				err = tx.Set(fileDocRef, fileMetadata)
-			}
-			if err != nil {
-				return fmt.Errorf("failed to set file metadata for %s in transaction: %w", originalFilename, err)
-			}
-			logCtx.Infof("Successfully uploaded '%s' to R2 and set metadata in Firestore.", originalFilename)
-		}
 
-		for _, action := range metadataReq.Actions {
-			if action.ActionConfirmed == "delete" {
+			if action.ActionConfirmed == "deleted" {
+				// The client has confirmed the deletion. The server now performs the secure deletion.
+				if action.R2ObjectKey == "" {
+					logCtx.Warnf("Skipping deletion for '%s' because R2ObjectKey is missing in confirm request.", action.FilePath)
+					continue
+				}
+
+				// 1. Delete from R2
 				_, err := ac.R2S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 					Bucket: aws.String(ac.R2BucketName),
 					Key:    aws.String(action.R2ObjectKey),
@@ -463,10 +444,11 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 					logCtx.WithError(err).Warnf("Failed to delete object '%s' from R2.", action.R2ObjectKey)
 				}
 
+				// 2. Delete metadata from Firestore
 				query := ac.FirestoreClient.Collection(filesCollectionPath).Where("file_path", "==", action.FilePath).Limit(1)
 				docs, err := tx.Documents(query).GetAll()
 				if err != nil {
-					logCtx.WithError(err).Warnf("Failed to query for file to delete: %s", action.FilePath)
+					logCtx.WithError(err).Warnf("Failed to query for file to delete from Firestore: %s", action.FilePath)
 					continue
 				}
 				for _, doc := range docs {
@@ -475,6 +457,7 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 						return fmt.Errorf("failed to delete firestore doc for %s: %w", action.FilePath, err)
 					}
 				}
+				logCtx.Infof("Successfully processed deletion for '%s'.", action.FilePath)
 			}
 		}
 
