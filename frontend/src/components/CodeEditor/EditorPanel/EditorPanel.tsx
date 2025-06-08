@@ -57,9 +57,7 @@ export const EditorPanel = ({
       // which is compatible with IStandaloneCodeEditor.
       (editorRef as React.MutableRefObject<MonacoEditor.IStandaloneCodeEditor | null>).current = editorInstance;
     }
-    if (initialContent) {
-      editorInstance.setValue(initialContent);
-    }
+    // No need to set value here, `defaultValue` or `value` prop handles it.
   };
 
   const handleEditorChange = (value: string | undefined) => {
@@ -68,38 +66,21 @@ export const EditorPanel = ({
     }
   };
 
-  // Update editor content when activeFile or initialContent changes
-  // This ensures if the file is changed from sidebar, editor updates.
-  useEffect(() => {
-    if (localEditorRef.current && activeFile) {
-      // Only update if the content is genuinely different to avoid resetting cursor/scroll
-      if (localEditorRef.current.getValue() !== (initialContent || `# ${activeFile}\n\n# Start coding...`)) {
-         localEditorRef.current.setValue(initialContent || `# ${activeFile}\n\n# Start coding...`);
-      }
-    } else if (localEditorRef.current && !activeFile && initialContent) {
-        // Handle case where activeFile might be cleared but there's initial content (e.g. new unsaved file)
-        if (localEditorRef.current.getValue() !== initialContent) {
-            localEditorRef.current.setValue(initialContent);
-        }
-    }
-  }, [activeFile, initialContent]);
+  // The useEffect to manually sync initialContent is no longer needed.
+  // The `key` prop on the Editor component handles re-mounting with the correct content
+  // when the active file changes, which is a cleaner and more idiomatic React approach.
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
-      {/* <div className="h-10 bg-background border-b border-border flex items-center justify-between px-4 flex-shrink-0">
-        <span className="text-sm text-foreground">{activeFile || "Untitled"}</span>
-      </div> */}
-      
       <div className="flex-1 overflow-hidden">
         <Editor
           height="100%"
           language={getLanguage(activeFile)}
-          defaultValue={initialContent || `# ${activeFile || 'Untitled'}\n\n# Start coding...`}
+          key={activeFile}
+          defaultValue={initialContent ?? ''}
           theme={isDark ? 'vs-dark' : 'vs'}
           onMount={handleEditorDidMount}
           onChange={handleEditorChange}
-          // The key prop can help force re-mount if truly needed, but typically not for content changes.
-          // key={activeFile} 
           options={{
             fontSize: 14,
             fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",

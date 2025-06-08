@@ -136,4 +136,15 @@ export interface ExecuteAuthRequestBody {
 export interface ExecuteCodeAuthResponse {
   message: string;
   job_id: string;
+  finalWorkspaceVersion?: string;
+}
+
+export interface ClientSideWorkspaceFileManifestItem {
+  filePath: string;
+  type: "file" | "folder";
+}
+
+export interface WorkspaceManifestWithVersion {
+  manifest: WorkspaceFileManifestItem[];
+  workspaceVersion: string;
 } 
