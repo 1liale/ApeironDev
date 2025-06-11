@@ -66,6 +66,7 @@ export interface WorkspaceContextActions {
   updateCurrentWorkspaceManifest: (
     newManifest: ClientSideWorkspaceFileManifestItem[],
   ) => void;
+  refreshManifestOnly: (workspace: WorkspaceSummaryItem) => Promise<void>;
 }
 
 export type WorkspaceContextType = WorkspaceContextState &

@@ -890,8 +890,24 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		return
 	}
 
-	// --- Fetch File Manifest ---
 	ctx := c.Request.Context()
+
+	// Get current workspace version to return to client
+	wsDocRef := ac.FirestoreClient.Collection("workspaces").Doc(workspaceID)
+	wsDocSnap, err := wsDocRef.Get(ctx)
+	if err != nil {
+		logCtx.WithError(err).Errorf("Failed to get workspace %s for version check", workspaceID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+	var workspaceData Workspace
+	if err := wsDocSnap.DataTo(&workspaceData); err != nil {
+		logCtx.WithError(err).Errorf("Failed to parse workspace data for %s", workspaceID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse workspace data"})
+		return
+	}
+
+	// --- Fetch File Manifest ---
 	filesCollectionPath := fmt.Sprintf("workspaces/%s/files", workspaceID)
 	iter := ac.FirestoreClient.Collection(filesCollectionPath).Documents(ctx)
 	defer iter.Stop()
@@ -927,7 +943,7 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	logCtx = logCtx.WithField("job_id", jobID)
 
 	jobDocRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
-	if _, err := jobDocRef.Set(c.Request.Context(), Job{
+	if _, err := jobDocRef.Set(ctx, Job{
 		Status:         "queued",
 		Language:       req.Language,
 		Input:          req.Input,
@@ -981,7 +997,7 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		},
 	}
 
-	createdTask, err := ac.TasksClient.CreateTask(c.Request.Context(), taskReq)
+	createdTask, err := ac.TasksClient.CreateTask(ctx, taskReq)
 	if err != nil {
 		logCtx.WithError(err).Error("Failed to create Cloud Task for authenticated execution")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit job for execution"})
@@ -992,10 +1008,12 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		"job_id":       jobID,
 		"task_name":    createdTask.GetName(),
 		"entrypoint":   req.EntrypointFile,
+		"final_workspace_version": workspaceData.WorkspaceVersion,
 	}).Info("Cloud Task created successfully for authenticated execution.")
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Authenticated code execution job created successfully.",
-		"job_id":  jobID,
+	c.JSON(http.StatusOK, ExecuteAuthResponse{
+		Message:               "Authenticated code execution job created successfully.",
+		JobID:                 jobID,
+		FinalWorkspaceVersion: workspaceData.WorkspaceVersion,
 	})
 } 

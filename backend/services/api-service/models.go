@@ -146,6 +146,12 @@ type ExecuteAuthRequest struct {
 	Input          string `json:"input,omitempty"`
 }
 
+type ExecuteAuthResponse struct {
+	Message                string `json:"message"`
+	JobID                  string `json:"job_id"`
+	FinalWorkspaceVersion  string `json:"finalWorkspaceVersion,omitempty"`
+}
+
 // --- Structs for Jobs & Cloud Tasks (existing, largely unchanged for this refactor scope) ---
 
 // Job struct stores information about a code execution job.

@@ -17,7 +17,41 @@ export const buildFileTree = (manifest: WorkspaceFileManifestItem[]): NodeModel<
   // Sort by path to ensure parent directories are created before their children.
   const sortedManifest = [...manifest].sort((a, b) => a.filePath.localeCompare(b.filePath));
 
+  // Helper function to ensure all parent folders exist
+  const ensureParentFolders = (filePath: string) => {
+    const pathParts = filePath.split('/');
+    
+    // Create all parent directories if they don't exist
+    for (let i = 1; i < pathParts.length; i++) {
+      const parentPath = pathParts.slice(0, i).join('/');
+      
+      if (!lookup.has(parentPath)) {
+        const parentParentPath = pathParts.slice(0, i - 1).join('/');
+        const parentParentId = parentParentPath ? lookup.get(parentParentPath) ?? 0 : 0;
+        
+        const nodeId = idCounter++;
+        lookup.set(parentPath, nodeId);
+        
+        const folderNode: NodeModel<FileSystemNodeData> = {
+          id: nodeId,
+          parent: parentParentId,
+          text: pathParts[i - 1],
+          droppable: true,
+          data: {
+            type: 'folder',
+            path: parentPath,
+            isEditing: false,
+          }
+        };
+        tree.push(folderNode);
+      }
+    }
+  };
+
   sortedManifest.forEach(item => {
+    // First ensure all parent folders exist
+    ensureParentFolders(item.filePath);
+    
     const pathParts = item.filePath.split('/');
     const text = pathParts[pathParts.length - 1];
     const parentPath = pathParts.slice(0, -1).join('/');

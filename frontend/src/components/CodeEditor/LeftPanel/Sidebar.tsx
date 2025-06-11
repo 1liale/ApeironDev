@@ -46,6 +46,7 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const {
     selectedWorkspace,
     currentWorkspaceManifest,
+    updateFileContent,
     addFileToCache,
     addFolderToCache,
     renamePathInCache,
@@ -56,7 +57,9 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
   const [treeData, setTreeData] = useState<NodeModel<FileSystemNodeData>[]>([]);
   const [selectedNodePath, setSelectedNodePath] = useState<string | null>(null);
   const [openNodeIds, setOpenNodeIds] = useState<Array<NodeModel["id"]>>([]);
-  const [editingNodeId, setEditingNodeId] = useState<NodeModel["id"] | null>(
+  const [editingNodeId, setEditingNodeId] = useState<
+    NodeModel["id"] | null
+  >(
     null
   );
   const isWorkspaceActionsDisabled = !isSignedIn || !selectedWorkspace;
@@ -135,9 +138,10 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       renamePathInCache(oldPath, newPath);
     }
 
-    const newManifest = treeToManifest(treeWithUpdatedPaths);
-    updateCurrentWorkspaceManifest(newManifest);
+    // Update tree immediately for visual feedback
     setTreeData(treeWithUpdatedPaths);
+    // NOTE: Do NOT update the local manifest here for moves!
+    // This allows sync to detect the move as delete + create operations
 
     // If the active file was the one dragged (or inside the dragged folder), update its path
     if (activeFile.startsWith(oldPath)) {
@@ -219,6 +223,11 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
       } else if (newNode.data.type === "folder") {
         addFolderToCache(newPath);
       }
+      // NOTE: Do NOT update manifest for new items!
+      // This allows sync to detect them as new items that need to be synced to the server
+      
+      // Update tree to reflect the new file/folder
+      setTreeData(treeWithUpdatedPaths);
     } else {
       if (oldPath !== newPath) {
         renamePathInCache(oldPath, newPath);
@@ -228,11 +237,13 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
           onFileSelect(updatedActiveFile);
         }
       }
+      // NOTE: Do NOT update manifest for renames/moves!
+      // This allows sync to detect the rename as delete + create operations
+      
+      // Update tree immediately for visual feedback
+      setTreeData(treeWithUpdatedPaths);
     }
 
-    const newManifest = treeToManifest(treeWithUpdatedPaths);
-    updateCurrentWorkspaceManifest(newManifest);
-    setTreeData(treeWithUpdatedPaths);
     setEditingNodeId(null);
   };
 
@@ -311,9 +322,11 @@ export const Sidebar = ({ activeFile, onFileSelect }: SidebarProps) => {
 
     const newTree = treeData.filter((n) => !idsToRemove.includes(n.id));
     const treeWithUpdatedPaths = updateAllPaths(newTree);
-    const newManifest = treeToManifest(treeWithUpdatedPaths);
-    updateCurrentWorkspaceManifest(newManifest);
+    
+    // Update tree immediately for visual feedback - user sees deletion right away
     setTreeData(treeWithUpdatedPaths);
+    // NOTE: Do NOT update manifest for deletes!
+    // This allows sync to detect deleted files and handle server-side deletion
   };
 
   return (
