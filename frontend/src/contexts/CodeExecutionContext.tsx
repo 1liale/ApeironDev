@@ -81,10 +81,6 @@ export const CodeExecutionProvider = ({
         return;
       }
       
-      if (isRetry) {
-        console.log(`🔄 Retrying execution with version: ${currentWorkspaceVersion}`);
-      }
-      
       try {
         const token = await auth.currentUser?.getIdToken();
         if (!token) {
@@ -133,8 +129,6 @@ export const CodeExecutionProvider = ({
           return;
         }
 
-        console.log(`🔧 Executing with version: ${currentWorkspaceVersion}, files: ${filesInEditorForSync.length}`);
-        
         const response = await executeCodeAuth(
           selectedWorkspace.workspaceId,
           token,
@@ -148,10 +142,7 @@ export const CodeExecutionProvider = ({
           currentWorkspaceVersion?.toString() ?? "0",
         );
 
-        console.log(`📤 Execution response: job_id=${response.job_id}, finalWorkspaceVersion=${response.finalWorkspaceVersion}`);
-
         if (response.finalWorkspaceVersion) {
-          console.log(`🔄 Updating workspace version to: ${response.finalWorkspaceVersion}`);
           setWorkspaceVersion(response.finalWorkspaceVersion);
           // Refresh only the manifest to reflect server state, without changing version
           await refreshManifestOnly(selectedWorkspace);
@@ -172,7 +163,6 @@ export const CodeExecutionProvider = ({
         if (err instanceof WorkspaceConflictError) {
           // Automatically recover from version conflicts
           if (err.newVersion && !isRetry) {
-            console.log(`🔄 Auto-recovering from version conflict: updating from ${currentWorkspaceVersion} to ${err.newVersion}`);
             setWorkspaceVersion(err.newVersion);
             toast.info("Workspace version updated, retrying...");
             // Retry once with the updated version, with longer delay to ensure state propagation
