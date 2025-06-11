@@ -160,7 +160,7 @@ const AppLayout = () => {
 const HomePage = () => {
   return (
     <TooltipProvider>
-      <Toaster position="bottom-right"/>
+      <Toaster position="bottom-right" closeButton/>
       <WorkspaceProvider>
         <AppLayout />
       </WorkspaceProvider>

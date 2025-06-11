@@ -4,6 +4,8 @@ import {
   DialogPortal,
   DialogOverlay,
   DialogContent,
+  DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +27,7 @@ export function OnboardingModal({ isOpen, onOpenChange }: OnboardingModalProps) 
       content: (
         <div className="text-center space-y-6">
           <div className="flex justify-center">
-            <img src="/logo.png" alt="App Logo" className="h-24 w-24 object-contain" />
+            <img src="/logo.png" alt="App Logo" className="h-36 w-36 object-contain" />
           </div>
           <div className="space-y-4">
             <p className="text-lg text-muted-foreground max-w-lg mx-auto">
@@ -187,8 +189,8 @@ export function OnboardingModal({ isOpen, onOpenChange }: OnboardingModalProps) 
           {/* Content */}
           <div className="p-6 md:p-8 min-h-[450px] md:min-h-[500px] flex flex-col">
             <div className="text-center mb-6 md:mb-8">
-              <h1 className="text-2xl md:text-3xl font-bold mb-2">{steps[currentStep].title}</h1>
-              <p className="text-base md:text-lg text-muted-foreground">{steps[currentStep].subtitle}</p>
+              <DialogTitle className="text-2xl md:text-3xl font-bold mb-2">{steps[currentStep].title}</DialogTitle>
+              <DialogDescription className="text-base md:text-lg text-muted-foreground">{steps[currentStep].subtitle}</DialogDescription>
             </div>
 
             <div className="flex-1 flex items-center justify-center">

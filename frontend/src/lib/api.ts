@@ -234,6 +234,7 @@ export async function executeCodeAuth(
         if (!manifestItem) {
             localSyncStates.push({ filePath: file.filePath, action: 'new', type: 'folder' });
         }
+        // Note: folders can't be "modified" - they're either new or unchanged
         continue; // No hash calculation for folders
     }
     const currentHash = calculateHash(file.content ?? '');
@@ -287,7 +288,7 @@ export async function executeCodeAuth(
       throw new Error(syncResponse.errorMessage || "Unknown error during sync.");
     }
 
-    // 3. Perform client-side actions (uploads)
+    // 3. Perform client-side actions (uploads) only if needed
     const actionsWithPresignedUrls = syncResponse.actions;
 
     // 2. Upload files that the server requested
@@ -296,26 +297,39 @@ export async function executeCodeAuth(
       .map(async (action) => {
         const fileToUpload = editorFileMap.get(action.filePath);
         if (fileToUpload && action.presignedUrl) {
-          return fetch(action.presignedUrl, {
-            method: "PUT",
-            body: fileToUpload.content,
-            headers: {
-              "Content-Type": "application/octet-stream",
-            },
-          });
+          try {
+            const uploadResponse = await fetch(action.presignedUrl, {
+              method: "PUT",
+              body: fileToUpload.content,
+              headers: {
+                "Content-Type": "application/octet-stream",
+              },
+            });
+            if (!uploadResponse.ok) {
+              throw new Error(`Upload failed with status: ${uploadResponse.status}`);
+            }
+            return uploadResponse;
+          } catch (error) {
+            throw new Error(`Failed to upload ${action.filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
         }
         return Promise.reject(
           new Error(`File not found or no presigned URL for ${action.filePath}`)
         );
       });
-    await Promise.all(uploadPromises);
 
-    // 4. Second phase of 2PC: Call /sync/confirm
-    if (syncResponse.newWorkspaceVersion) {
+    if (uploadPromises.length > 0) {
+      await Promise.all(uploadPromises);
+    }
+
+    // 4. Second phase of 2PC: Call /sync/confirm only if we have actions to confirm
+    if (syncResponse.newWorkspaceVersion && actionsWithPresignedUrls.some(action => 
+      action.actionRequired === "upload" || action.actionRequired === "delete")) {
       const payloadForConfirm: ConfirmSyncRequestAPI = {
         workspaceVersion: syncResponse.newWorkspaceVersion!,
         syncActions: actionsWithPresignedUrls
           .filter((action) => action.actionRequired === "upload" || action.actionRequired === "delete")
+          .filter((action) => action.fileId && action.r2ObjectKey) // Ensure we have required fields
           .map((action): FileActionAPI => {
             const fileState = editorFileMap.get(action.filePath);
             const content = fileState?.content ?? '';
