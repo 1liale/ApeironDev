@@ -54,6 +54,7 @@ export const CodeExecutionProvider = ({
     fileContentCache,
     setWorkspaceVersion,
     refreshWorkspace,
+    refreshManifestOnly,
   } = useWorkspace();
 
   const handleJobCompletionOrFailure = useCallback(
@@ -72,7 +73,18 @@ export const CodeExecutionProvider = ({
       language: ExecuteRequestBody["language"],
       code: string,
       input: string,
+      isRetry: boolean = false
     ) => {
+      // Prevent concurrent executions that could cause version conflicts
+      if (isExecuting) {
+        console.warn('⚠️  Execution already in progress, skipping...');
+        return;
+      }
+      
+      if (isRetry) {
+        console.log(`🔄 Retrying execution with version: ${currentWorkspaceVersion}`);
+      }
+      
       try {
         const token = await auth.currentUser?.getIdToken();
         if (!token) {
@@ -121,6 +133,8 @@ export const CodeExecutionProvider = ({
           return;
         }
 
+        console.log(`🔧 Executing with version: ${currentWorkspaceVersion}, files: ${filesInEditorForSync.length}`);
+        
         const response = await executeCodeAuth(
           selectedWorkspace.workspaceId,
           token,
@@ -134,10 +148,13 @@ export const CodeExecutionProvider = ({
           currentWorkspaceVersion?.toString() ?? "0",
         );
 
+        console.log(`📤 Execution response: job_id=${response.job_id}, finalWorkspaceVersion=${response.finalWorkspaceVersion}`);
+
         if (response.finalWorkspaceVersion) {
+          console.log(`🔄 Updating workspace version to: ${response.finalWorkspaceVersion}`);
           setWorkspaceVersion(response.finalWorkspaceVersion);
-          // Refresh workspace to get the latest manifest from server after sync
-          await refreshWorkspace(selectedWorkspace);
+          // Refresh only the manifest to reflect server state, without changing version
+          await refreshManifestOnly(selectedWorkspace);
         }
 
         if (!response.job_id) {
@@ -153,17 +170,27 @@ export const CodeExecutionProvider = ({
         let errorMessage =
           "An unknown error occurred during authenticated execution.";
         if (err instanceof WorkspaceConflictError) {
-          toast.error("Workspace is out of sync", {
-            description:
-              "A newer version is available. Refreshing will discard your local changes.",
-            action: {
-              label: "Refresh Now",
-              onClick: () =>
-                selectedWorkspace && refreshWorkspace(selectedWorkspace),
-            },
-            duration: Infinity,
-          });
-          errorMessage = `Execution failed: Workspace conflict.`;
+          // Automatically recover from version conflicts
+          if (err.newVersion && !isRetry) {
+            console.log(`🔄 Auto-recovering from version conflict: updating from ${currentWorkspaceVersion} to ${err.newVersion}`);
+            setWorkspaceVersion(err.newVersion);
+            toast.info("Workspace version updated, retrying...");
+            // Retry once with the updated version, with longer delay to ensure state propagation
+            setTimeout(() => executeAuthenticated(language, code, input, true), 500);
+            return;
+          } else {
+            toast.error("Workspace is out of sync", {
+              description:
+                "A newer version is available. Refreshing will discard your local changes.",
+              action: {
+                label: "Refresh Now",
+                onClick: () =>
+                  selectedWorkspace && refreshWorkspace(selectedWorkspace),
+              },
+              duration: Infinity,
+            });
+            errorMessage = `Execution failed: Workspace conflict could not be resolved automatically.`;
+          }
         } else if (err instanceof Error) {
           errorMessage = `API call to /execute-auth failed: ${err.message}`;
           console.error(errorMessage, err);
@@ -181,6 +208,8 @@ export const CodeExecutionProvider = ({
       refreshWorkspace,
       selectedWorkspace,
       setWorkspaceVersion,
+      refreshManifestOnly,
+      isExecuting,
     ],
   );
 

@@ -218,10 +218,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         if (Object.keys(fileContents).length > 0) {
           setFileContentCache((prevCache) => ({
             ...prevCache,
-            [workspaceId]: {
-              ...(prevCache[workspaceId] || {}),
-              ...fileContents,
-            },
+            [workspaceId]: fileContents,
           }));
         } else {
           setFileContentCache((prevCache) => ({
@@ -243,6 +240,36 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
       }
     },
     [setFileContentCache],
+  );
+
+  const refreshManifestOnly = useCallback(
+    async (workspaceToRefresh: WorkspaceSummaryItem) => {
+      const { workspaceId, name } = workspaceToRefresh;
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) throw new Error("Authentication token not available.");
+
+        const { manifest } = await fetchWorkspaceDetails(workspaceId, token);
+
+        // Only update the manifest, preserve the current workspace version
+        setManifestAndVersionCache((prev) => ({
+          ...prev,
+          [workspaceId]: { 
+            manifest, 
+            version: prev[workspaceId]?.version || currentWorkspaceVersion || "0"
+          },
+        }));
+        setCurrentWorkspaceManifest(manifest);
+        
+      } catch (error) {
+        console.error(
+          `Failed to refresh manifest for ${name}:`,
+          error,
+        );
+        // Don't show toast error for manifest-only refresh as it's less critical
+      }
+    },
+    [currentWorkspaceVersion],
   );
 
   const setWorkspaceVersion = useCallback(
@@ -358,6 +385,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     renamePathInCache,
     removePathFromCache,
     updateCurrentWorkspaceManifest,
+    refreshManifestOnly,
   };
 
   return (

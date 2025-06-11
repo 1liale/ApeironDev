@@ -272,15 +272,20 @@ export async function executeCodeAuth(
       workspaceVersion: currentLocalWorkspaceVersion,
       files: localSyncStates,
     };
+    console.log(`🔧 Sync Phase 1: version=${currentLocalWorkspaceVersion}, files=${localSyncStates.length}`);
+    
     const syncResponse = await syncWorkspace(
       workspaceId,
       syncRequest,
       authToken
     );
 
+    console.log(`📤 Sync Phase 1 response: status=${syncResponse.status}, newVersion=${syncResponse.newWorkspaceVersion}, actions=${syncResponse.actions.length}`);
+
     if (syncResponse.status === "workspace_conflict") {
       throw new WorkspaceConflictError(
         syncResponse.errorMessage || "Workspace version conflict during sync.",
+        workspaceId,
         syncResponse.newWorkspaceVersion
       );
     }
@@ -290,7 +295,7 @@ export async function executeCodeAuth(
 
     // 3. Perform client-side actions (uploads) only if needed
     const actionsWithPresignedUrls = syncResponse.actions;
-
+    
     // 2. Upload files that the server requested
     const uploadPromises = actionsWithPresignedUrls
       .filter((action) => action.actionRequired === "upload" && action.type === 'file')
@@ -346,11 +351,16 @@ export async function executeCodeAuth(
           }),
       };
 
+      console.log(`🔧 Sync Phase 2: version=${syncResponse.newWorkspaceVersion}, actions=${payloadForConfirm.syncActions.length}`);
+
       const confirmResponse = await confirmSyncWorkspace(
         workspaceId,
         payloadForConfirm,
         authToken
       );
+      
+      console.log(`📤 Sync Phase 2 response: status=${confirmResponse.status}, finalVersion=${confirmResponse.finalWorkspaceVersion}`);
+      
       if (confirmResponse.status !== "success") {
         throw new Error(
           confirmResponse.errorMessage || "Failed to confirm sync."
