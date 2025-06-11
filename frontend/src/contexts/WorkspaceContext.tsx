@@ -297,6 +297,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         toast.error("You must be signed in to create a workspace.");
         return null;
       }
+
       setIsCreatingWorkspace(true);
       try {
         const token = await auth.currentUser?.getIdToken();

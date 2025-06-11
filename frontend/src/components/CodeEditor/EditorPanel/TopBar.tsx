@@ -28,7 +28,7 @@ export const TopBar = ({ isDark, onToggleTheme }: TopBarProps) => {
     <div className="h-14 bg-background border-b border-border flex items-center justify-between px-4 py-2">
       <div className="flex items-center space-x-2">
         <Link to="/" className="flex items-center mr-6">
-          <img src="/logo.png" alt="Code Editor" width={45} height={45} />
+          <img src="/logo.png" alt="Code Editor" width={50} height={50} />
           <div className="text-foreground font-semibold text-xl ml-2">ApeironDev</div>
         </Link>
 

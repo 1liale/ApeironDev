@@ -1,9 +1,10 @@
+import { Spinner } from "@/components/ui/spinner";
 import { auth } from "@/lib/firebase";
 import { useAuth } from "@clerk/react-router";
 import { signInWithCustomToken, signOut as firebaseSignOut, type Auth } from "firebase/auth";
-import { useEffect, createContext, useContext } from "react";
+import { useEffect, createContext, useContext, useState } from "react";
 
-// Create a context for the Firebase auth instance
+// Create context for Firebase auth
 export const FirebaseAuthContext = createContext<Auth | null>(null);
 
 // Custom hook to use the Firebase auth context
@@ -15,36 +16,86 @@ export const useFirebaseAuth = () => {
   return context;
 };
 
-export const FirebaseAuthProvider = ({ children }: { children: React.ReactNode }) => {
-    const { getToken, userId } = useAuth();
+interface FirebaseAuthProviderProps {
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+export const FirebaseAuthProvider = ({ children, fallback }: FirebaseAuthProviderProps) => {
+    const { getToken, userId, isSignedIn } = useAuth();
+    const [isFirebaseReady, setIsFirebaseReady] = useState(false);
+    const [isInitializing, setIsInitializing] = useState(true);
 
     useEffect(() => {
         const syncFirebaseAuth = async () => {
-            if (userId) {
-                try {
-                    // Only attempt signInWithCustomToken if there's no current Firebase user
-                    if (!auth.currentUser) { 
-                        const token = await getToken({ template: 'integration_firebase' });
-                        if (token) {
-                            await signInWithCustomToken(auth, token);
-                            console.log("FirebaseAuthProvider: Successfully signed into Firebase.");
-                        } else {
-                            console.warn("FirebaseAuthProvider: Clerk token for Firebase was null. Firebase sign-in skipped.");
-                            // If token is null, and there's an existing Firebase user, sign them out.
-                            if (auth.currentUser) await firebaseSignOut(auth);
-                        }
+            setIsInitializing(true);
+            setIsFirebaseReady(false);
+            
+            if (!isSignedIn || !userId) {
+                // User is not signed in with Clerk, so Firebase should also be signed out
+                if (auth.currentUser) {
+                    try {
+                        await firebaseSignOut(auth);
+                    } catch (error) {
+                        console.error('FirebaseAuthProvider: Error signing out from Firebase:', error);
                     }
-                } catch (err) {
-                    console.error('FirebaseAuthProvider: Firebase auth sync failed during sign-in:', err);
-                    if (auth.currentUser) {
+                }
+                setIsFirebaseReady(false);
+                setIsInitializing(false);
+                return;
+            }
+
+            try {
+                // Check if we already have a Firebase user
+                if (auth.currentUser) {
+                    // Verify the existing token is still valid
+                    try {
+                        await auth.currentUser.getIdToken(true); // Force refresh
+                        setIsFirebaseReady(true);
+                        setIsInitializing(false);
+                        return;
+                    } catch (tokenError) {
+                        console.warn("FirebaseAuthProvider: Existing token invalid, re-authenticating...");
                         await firebaseSignOut(auth);
                     }
                 }
+
+                // If no Firebase user or token was invalid, sign in with Clerk token
+                const token = await getToken({ template: 'integration_firebase' });
+                if (token) {
+                    await signInWithCustomToken(auth, token);
+                    setIsFirebaseReady(true);
+                } else {
+                    console.warn("FirebaseAuthProvider: Clerk token for Firebase was null. Firebase sign-in skipped.");
+                    setIsFirebaseReady(false);
+                }
+            } catch (err) {
+                console.error('FirebaseAuthProvider: Firebase auth sync failed during sign-in:', err);
+                if (auth.currentUser) {
+                    try {
+                        await firebaseSignOut(auth);
+                    } catch (signOutError) {
+                        console.error('FirebaseAuthProvider: Error during cleanup sign out:', signOutError);
+                    }
+                }
+                setIsFirebaseReady(false);
+            } finally {
+                setIsInitializing(false);
             }
         };
 
         void syncFirebaseAuth();
-    }, [userId, getToken]); // Re-run when Clerk user or token acquisition method changes
+    }, [isSignedIn, userId, getToken]); // Re-run when Clerk auth state changes
+
+    // Don't render children until Firebase auth is ready (when user is signed in)
+    const shouldRenderChildren = !isSignedIn || (!isInitializing && isFirebaseReady);
+
+    if (!shouldRenderChildren) {
+        return <div className="flex flex-col items-center justify-center h-screen">
+            <Spinner size="large" />
+            <p className="mt-4 text-muted-foreground">Initializing workspace...</p>
+        </div>;
+    }
 
     return (
         <FirebaseAuthContext.Provider value={auth}>
@@ -52,3 +103,4 @@ export const FirebaseAuthProvider = ({ children }: { children: React.ReactNode }
         </FirebaseAuthContext.Provider>
     );
 };
+

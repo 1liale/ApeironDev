@@ -136,6 +136,8 @@ export const CodeExecutionProvider = ({
 
         if (response.finalWorkspaceVersion) {
           setWorkspaceVersion(response.finalWorkspaceVersion);
+          // Refresh workspace to get the latest manifest from server after sync
+          await refreshWorkspace(selectedWorkspace);
         }
 
         if (!response.job_id) {

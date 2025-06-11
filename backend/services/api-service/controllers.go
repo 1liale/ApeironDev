@@ -191,12 +191,20 @@ func (ac *ApiController) HandleSync(c *gin.Context) {
 			if clientFile.Type == "folder" {
 				if clientFile.Action == "new" && !foundServerMeta {
 					fileID = uuid.New().String()
+					// Generate R2ObjectKey for folders (even though we don't store anything in R2)
+					r2ObjectKey = fmt.Sprintf("workspaces/%s/folders/%s", workspaceID, fileID)
 					currentAction.ActionRequired = "upload" // This signals the client to include it in the confirm step
 					itemLogCtx.Info("New folder identified. Flagging for metadata creation.")
 				} else {
 					currentAction.ActionRequired = "none"
+					// For existing folders, get the existing metadata
+					if foundServerMeta {
+						fileID = serverMeta.FileID
+						r2ObjectKey = serverMeta.R2ObjectKey
+					}
 				}
 				currentAction.FileID = fileID
+				currentAction.R2ObjectKey = r2ObjectKey
 				responseActions = append(responseActions, currentAction)
 				continue // Go to next file
 			}

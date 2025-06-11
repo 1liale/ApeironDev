@@ -1,0 +1,178 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Web IDE with AI Code Assist - Project Context
+
+## Project Overview
+A sophisticated Web IDE (Integrated Development Environment) with AI code assistance capabilities, designed for collaborative coding with real-time workspace sharing and code execution.
+
+## Architecture
+
+### Frontend
+- **Framework**: React + Vite with TypeScript
+- **UI Components**: shadcn/ui with Tailwind CSS
+- **Code Editor**: Monaco Editor (VS Code editor core)
+- **State Management**: React Context API
+- **Authentication**: Clerk
+- **Key Features**:
+  - File tree management with drag & drop
+  - Real-time code editor
+  - Integrated terminal/console
+  - Chat panel for AI assistance
+  - Theme toggle (light/dark)
+  - Workspace selector
+
+### Backend - Microservices Architecture
+
+#### 1. Go Gin API Service
+- **Purpose**: Main API layer handling workspace management, file operations, and orchestration
+- **Key Responsibilities**:
+  - Workspace CRUD operations
+  - File synchronization with 2PC protocol
+  - User authentication & authorization
+  - Task queue management
+  - R2 storage integration
+
+#### 2. Python Worker Service
+- **Purpose**: Code execution engine
+- **Key Responsibilities**:
+  - Execute user code in isolated environments
+  - Store execution results in Firestore (Jobs collection)
+  - Handle workspace file context during execution
+
+### Infrastructure
+- **Cloud Provider**: Google Cloud Platform (GCP)
+- **Storage**: Cloudflare R2 (S3-compatible)
+- **Database**: Google Firestore
+- **Task Queue**: Google Cloud Tasks
+- **Container Registry**: Google Artifact Registry
+- **Infrastructure as Code**: Terraform
+- **CI/CD**: Google Cloud Build
+
+## Key Features
+
+### Distributed Shared Workspaces
+- Multiple users can collaborate on the same workspace
+- Workspace-level permissions and access control
+- File tree operations (create, rename, delete, move)
+
+### Two-Phase Commit (2PC) Protocol
+- **Phase 1 (Sync)**: Client sends proposed changes, server validates and prepares presigned PUT urls for R2
+- **Phase 2 (Confirm)**: Client confirms changes (i.e uploads objects to Storage), server commits atomically (also handles any DELETE operations by calling R2 directly)
+- Ensures data consistency across distributed workspace operations
+- Triggered on authenticated code execution ("Run" button)
+
+### Optimistic Concurrency Control (OCC)
+- Workspace versioning system
+- Conflict detection and resolution
+- Prevents lost updates when multiple users edit simultaneously
+- Version mismatch handling with user notification
+
+### Dual Execution Flows
+
+#### Authenticated Flow
+1. User authentication via Clerk
+2. Workspace selection/creation
+3. File editing with local caching
+4. On "Run": Full workspace sync + confirm cycle
+5. Code execution with complete workspace context
+6. Result streaming back to UI
+
+#### Public Flow
+- Simplified execution without authentication
+- No workspace persistence
+- Direct code execution
+- Suitable for quick code testing
+
+## Technical Implementation
+
+### File Management
+- **Client-side**: File content caching with hash-based change detection
+- **Server-side**: R2 object storage with presigned URLs
+- **Synchronization**: Delta sync with conflict resolution
+- **File Tree**: React DnD for drag & drop operations
+
+### Code Execution
+- **Job Queue**: Asynchronous execution via Cloud Tasks
+- **Isolation**: Each execution runs in isolated environment
+- **Streaming**: Real-time output streaming via WebSocket/SSE
+- **Context**: Full workspace file access during execution
+
+### Authentication & Authorization
+- **Provider**: Clerk authentication
+- **Workspace Access**: Role-based permissions (owner, collaborator)
+- **API Security**: JWT token validation middleware
+
+### Data Flow
+```
+Frontend -> API Service -> Cloud Tasks -> Python Worker
+    ^                                           |
+    |<-- Firestore Job Status Updates <---------|
+```
+
+## Key Technologies
+
+### Frontend Stack
+- React 18 + TypeScript
+- Vite (build tool)
+- Monaco Editor
+- React Router v7
+- Tailwind CSS + shadcn/ui
+- React Query (data fetching)
+- React DnD (drag & drop)
+
+### Backend Stack
+- Go + Gin framework
+- Python (worker service)
+- Google Cloud Services:
+  - Cloud Run (container hosting)
+  - Cloud Tasks (job queue)
+  - Firestore (database)
+  - Secret Manager
+- Cloudflare R2 (object storage)
+
+### DevOps & Infrastructure
+- Terraform (IaC)
+- Docker (containerization)
+- Google Cloud Build (CI/CD)
+- GitHub (source control)
+
+## Project Structure
+
+### Frontend (`/frontend`)
+- `src/components/CodeEditor/` - Main IDE interface
+- `src/contexts/` - React contexts for state management
+- `src/hooks/` - Custom React hooks
+- `src/lib/` - Utility functions and API calls
+- `src/types/` - TypeScript type definitions
+
+### Backend (`/backend`)
+- `services/api-service/` - Go Gin API service
+- `services/python-worker/` - Python execution service
+- `gcp-terraform/` - GCP infrastructure definitions
+- `cf-terraform/` - Cloudflare R2 setup
+
+## Development Patterns
+
+### Error Handling
+- Workspace conflict errors with version recovery
+- Network error retry mechanisms
+- User-friendly error messages
+
+### Performance Optimizations
+- File content caching
+- Incremental sync operations
+- Lazy loading of workspace contents
+- Debounced auto-save
+
+### Security Considerations
+- JWT token validation
+- Workspace access control
+- Sandboxed code execution
+- Presigned URL time limits
+
+## Future Considerations
+- AI code suggestions integration
+- Plugin/extension system
