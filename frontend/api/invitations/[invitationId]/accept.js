@@ -1,10 +1,9 @@
-import { VercelRequest, VercelResponse } from "@vercel/node";
 import { verifyToken } from "@clerk/backend";
 import admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 
 // Initialize Firebase Admin SDK if not already initialized
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY as string);
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -13,27 +12,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-interface WorkspaceMembership {
-  membership_id: string;
-  workspace_id: string;
-  user_id: string;
-  role: "owner" | "editor" | "viewer";
-  joined_at: string;
-}
-
-interface WorkspaceInvitation {
-  invitation_id: string;
-  workspace_id: string;
-  invitee_email: string;
-  invitee_role: "viewer" | "editor" | "owner";
-  inviter_id: string;
-  status: "pending" | "accepted" | "expired" | "revoked";
-  created_at: string;
-  expires_at: string;
-  clerk_invitation_id?: string;
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST"]);
     return res.status(405).json({ error: "Method not allowed" });
@@ -72,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         throw new Error("Invitation not found");
       }
 
-      const invitation = invitationDoc.data() as WorkspaceInvitation;
+      const invitation = invitationDoc.data();
 
       if (invitation.status !== "pending") {
         throw new Error(`Invitation has already been ${invitation.status}.`);
@@ -84,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 1. Create the new membership
       const membershipId = uuidv4();
-      const newMembership: WorkspaceMembership = {
+      const newMembership = {
         membership_id: membershipId,
         workspace_id: invitation.workspace_id,
         user_id: userId,
@@ -112,8 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       role: role,
     });
   } catch (error) {
-    const e = error as Error;
-    console.error("Error accepting invitation:", e);
+    console.error("Error accepting invitation:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 } 
