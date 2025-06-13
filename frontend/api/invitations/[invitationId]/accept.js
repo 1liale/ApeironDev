@@ -50,6 +50,13 @@ export default async function handler(req, res) {
     const userId = verifiedToken.sub;
     console.log("Token verified successfully, userId:", userId);
 
+    // Get user information from Clerk
+    const user = await clerkClient.users.getUser(userId);
+    const userInfo = {
+      email: user.emailAddresses?.[0]?.emailAddress || "",
+      name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+    };
+
     // Use a transaction to ensure atomicity
     const { workspaceId, role } = await db.runTransaction(async (transaction) => {
       const invitationRef = db
@@ -77,6 +84,8 @@ export default async function handler(req, res) {
         membership_id: membershipId,
         workspace_id: invitation.workspace_id,
         user_id: userId,
+        user_email: userInfo.email,
+        user_name: userInfo.name,
         role: invitation.invitee_role,
         joined_at: new Date().toISOString(),
       };

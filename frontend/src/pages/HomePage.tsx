@@ -16,11 +16,23 @@ import { CodeExecutionProvider } from "@/contexts/CodeExecutionContext";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/WorkspaceContext";
-import { useAuth } from "@clerk/clerk-react";
+import { useAuth, useClerk } from "@clerk/clerk-react";
 import { Spinner } from "@/components/ui/spinner";
 
 const AppLayout = () => {
   const { isSignedIn } = useAuth();
+  const { openSignUp } = useClerk();
+  const { 
+    selectedWorkspace, 
+    fileContentCache, 
+    workspaces,
+    isLoadingWorkspaces,
+    isLoadingManifest,
+    isLoadingWorkspaceContents,
+    invitation,
+    processWorkspaceInvitation,
+  } = useWorkspace();
+  
   const [activeFile, setActiveFile] = useState<string>(isSignedIn ? "" : "main.py");
   const [isDark, setIsDark] = useState(() => {
     const savedTheme = localStorage.getItem("theme");
@@ -29,20 +41,12 @@ const AppLayout = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
 
-  const { 
-    selectedWorkspace, 
-    fileContentCache, 
-    workspaces,
-    isLoadingWorkspaces,
-    isLoadingManifest,
-    isLoadingWorkspaceContents,
-  } = useWorkspace();
-
   const isContentLoading = useMemo(() => {
     if (!isSignedIn) return false; // No loading for unauthenticated view
+    if (invitation.invitationId) return false; // Invitation flow has its own loading states
     // Content is loading if we are fetching workspaces, the manifest, or the files.
     return isLoadingWorkspaces || isLoadingManifest || isLoadingWorkspaceContents;
-  }, [isSignedIn, isLoadingWorkspaces, isLoadingManifest, isLoadingWorkspaceContents]);
+  }, [isSignedIn, invitation.invitationId, isLoadingWorkspaces, isLoadingManifest, isLoadingWorkspaceContents]);
 
   const fileContent = useMemo(() => {
     // Show nothing while loading, as the spinner will be displayed.
@@ -110,6 +114,21 @@ const AppLayout = () => {
     }
   }, []);
 
+  // Handle invitation processing when user is signed in
+  useEffect(() => {
+    if (invitation.requiresProcessing && invitation.invitationId && invitation.status === "idle") {
+      processWorkspaceInvitation(invitation.invitationId);
+    }
+  }, [invitation.requiresProcessing, invitation.invitationId, invitation.status, processWorkspaceInvitation]);
+
+  // Handle opening signup modal for invitations
+  useEffect(() => {
+    if (invitation.requiresSignup) {
+      openSignUp();
+    }
+  }, [invitation.requiresSignup, openSignUp]);
+
+  // Regular app layout
   return (
     <CodeExecutionProvider>
       <div className={`h-screen flex flex-col ${isDark ? "dark" : ""}`}>

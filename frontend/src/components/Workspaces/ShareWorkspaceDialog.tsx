@@ -2,6 +2,7 @@ import { useState } from "react";
 import { User, Mail, UserPlus, Copy, X } from "lucide-react";
 import { useAuth } from "@clerk/react-router";
 import { Button } from "@/components/ui/button";
+import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/components/ui/sonner";
 import type { WorkspaceSummaryItem } from "@/types/api";
+import type { WorkspaceMember, WorkspaceInvitation } from "@/types/workspace";
 
 interface ShareWorkspaceDialogProps {
   workspace: WorkspaceSummaryItem;
@@ -30,46 +32,23 @@ interface ShareWorkspaceDialogProps {
   onClose: () => void;
 }
 
-interface WorkspaceInvitation {
-  id: string;
-  email: string;
-  role: "viewer" | "editor" | "admin";
-  status: "pending" | "accepted";
-  invitedAt: string;
-}
 
-interface WorkspaceMember {
-  id: string;
-  email: string;
-  name?: string;
-  role: "owner" | "admin" | "editor" | "viewer";
-  joinedAt: string;
-}
-
-// Mock data - in a real app, this would come from your backend
-const mockMembers: WorkspaceMember[] = [
-  {
-    id: "1",
-    email: "john@example.com",
-    name: "John Doe",
-    role: "owner",
-    joinedAt: "2024-01-01",
-  },
-];
-
-const mockInvitations: WorkspaceInvitation[] = [];
 
 export const ShareWorkspaceDialog = ({
   workspace,
   isOpen,
   onClose,
 }: ShareWorkspaceDialogProps) => {
-  const { getToken } = useAuth();
+  const { getToken, userId } = useAuth();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"viewer" | "editor" | "owner">("editor");
   const [isInviting, setIsInviting] = useState(false);
-  const [members] = useState<WorkspaceMember[]>(mockMembers);
-  const [invitations] = useState<WorkspaceInvitation[]>(mockInvitations);
+  
+  // Use the hook to get real-time workspace data
+  const { members, invitations, isLoading, error, refresh } = useWorkspaceData(
+    workspace?.workspaceId || null,
+    userId || null
+  );
 
   const handleInvite = async () => {
     if (!email || !email.includes("@")) {
@@ -105,6 +84,8 @@ export const ShareWorkspaceDialog = ({
       const data = await response.json();
       if (data.success) {
         toast.success(`Invitation sent to ${email}`);
+        // Refresh the workspace data to show the new invitation
+        refresh();
       } else {
         throw new Error(data.error || "Failed to send invitation");
       }
@@ -122,21 +103,6 @@ export const ShareWorkspaceDialog = ({
     const inviteLink = `${window.location.origin}/invite/${workspace.workspaceId}`;
     navigator.clipboard.writeText(inviteLink);
     toast.success("Invite link copied to clipboard");
-  };
-
-  const getRoleColor = (role: string) => {
-    switch (role) {
-      case "owner":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200";
-      case "admin":
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
-      case "editor":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-      case "viewer":
-        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-      default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-    }
   };
 
   return (
@@ -195,7 +161,7 @@ export const ShareWorkspaceDialog = ({
                 <Copy className="w-3 h-3 mr-1" />
                 Copy invite link
               </Button>
-              <span>or send a direct link</span>
+              <span>or send to email</span>
             </div>
           </div>
 
@@ -212,7 +178,7 @@ export const ShareWorkspaceDialog = ({
             <div className="space-y-2">
               {members.map((member) => (
                 <div
-                  key={member.id}
+                  key={member.user_id}
                   className="flex items-center justify-between p-3 rounded-lg border"
                 >
                   <div className="flex items-center gap-3">
@@ -221,17 +187,17 @@ export const ShareWorkspaceDialog = ({
                     </div>
                     <div>
                       <div className="font-medium text-sm">
-                        {member.name || member.email}
+                        {member.user_name || member.user_email}
                       </div>
-                      {member.name && (
+                      {member.user_name && member.user_email && (
                         <div className="text-xs text-muted-foreground">
-                          {member.email}
+                          {member.user_email}
                         </div>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className={getRoleColor(member.role)}>
+                    <Badge variant="secondary">
                       {member.role}
                     </Badge>
                     {member.role !== "owner" && (
@@ -257,7 +223,7 @@ export const ShareWorkspaceDialog = ({
                 <div className="space-y-2">
                   {invitations.map((invitation) => (
                     <div
-                      key={invitation.id}
+                      key={invitation.invitation_id}
                       className="flex items-center justify-between p-3 rounded-lg border border-dashed"
                     >
                       <div className="flex items-center gap-3">
@@ -265,15 +231,15 @@ export const ShareWorkspaceDialog = ({
                           <Mail className="w-4 h-4 text-orange-600 dark:text-orange-300" />
                         </div>
                         <div>
-                          <div className="font-medium text-sm">{invitation.email}</div>
+                          <div className="font-medium text-sm">{invitation.invitee_email}</div>
                           <div className="text-xs text-muted-foreground">
-                            Invited • {invitation.invitedAt}
+                            Invited by {invitation.inviter_name || invitation.inviter_email} • {new Date(invitation.created_at).toLocaleDateString()}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Badge className={getRoleColor(invitation.role)}>
-                          {invitation.role}
+                        <Badge variant="secondary">
+                          {invitation.invitee_role}
                         </Badge>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                           <X className="w-3 h-3" />

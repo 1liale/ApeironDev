@@ -26,6 +26,8 @@ export interface JobResult {
 // ====== Workspace Types ======
 export interface CreateWorkspaceRequestBody {
   name: string;
+  userEmail?: string;
+  userName?: string;
 }
 
 export interface CreateWorkspaceResponse {

@@ -25,7 +25,9 @@ type Workspace struct {
 
 // CreateWorkspaceRequest defines the expected request body for creating a new workspace.
 type CreateWorkspaceRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name      string `json:"name" binding:"required"`
+	UserEmail string `json:"userEmail,omitempty"`
+	UserName  string `json:"userName,omitempty"`
 }
 
 // CreateWorkspaceResponse is the response after creating a new workspace.
@@ -51,6 +53,8 @@ type WorkspaceMembership struct {
 	MembershipID string    `json:"membershipId" firestore:"membership_id"`
 	WorkspaceID  string    `json:"workspaceId" firestore:"workspace_id"`
 	UserID       string    `json:"userId" firestore:"user_id"`
+	UserEmail    string    `json:"userEmail" firestore:"user_email"`
+	UserName     string    `json:"userName" firestore:"user_name"`
 	Role         string    `json:"role" firestore:"role"`
 	JoinedAt     time.Time `json:"joinedAt" firestore:"joined_at"`
 }

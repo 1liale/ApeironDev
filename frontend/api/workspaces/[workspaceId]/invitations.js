@@ -41,7 +41,7 @@ async function checkWorkspacePermission(userId, workspaceId) {
 }
 
 // Helper function to create invitation in Firestore
-async function createInvitation(workspaceId, inviteeEmail, role, inviterId) {
+async function createInvitation(workspaceId, inviteeEmail, role, inviterId, inviterInfo) {
   const invitationId = uuidv4();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -52,6 +52,8 @@ async function createInvitation(workspaceId, inviteeEmail, role, inviterId) {
     invitee_email: inviteeEmail,
     invitee_role: role,
     inviter_id: inviterId,
+    inviter_email: inviterInfo.email,
+    inviter_name: inviterInfo.name,
     status: "pending",
     created_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
@@ -123,6 +125,13 @@ export default async function handler(req, res) {
         .json({ error: "Invalid role. Must be viewer, editor, or owner" });
     }
 
+    // Get inviter information from Clerk
+    const inviterUser = await clerkClient.users.getUser(userId);
+    const inviterInfo = {
+      email: inviterUser.emailAddresses?.[0]?.emailAddress || "",
+      name: `${inviterUser.firstName || ""} ${inviterUser.lastName || ""}`.trim(),
+    };
+
     // Check if user has permission to invite to this workspace
     const hasPermission = await checkWorkspacePermission(userId, workspaceId);
     if (!hasPermission) {
@@ -142,10 +151,14 @@ export default async function handler(req, res) {
     }
 
     // Create the invitation
-    const invitation = await createInvitation(workspaceId, email, role, userId);
+    const invitation = await createInvitation(workspaceId, email, role, userId, inviterInfo);
 
     // Send email invitation using Clerk
-    const redirectUrl = `${process.env.APP_BASE_URL}/accept-workspace-invite/${invitation.invitation_id}`;
+    // Ensure we have a valid base URL
+    const baseUrl = process.env.APP_BASE_URL || 'https://www.apeirondev.tech';
+    const redirectUrl = `${baseUrl}/accept-workspace-invite/${invitation.invitation_id}`;
+    
+    console.log('Creating Clerk invitation with redirect URL:', redirectUrl);
     
     const clerkInvitation = await clerkClient.invitations.createInvitation({
       emailAddress: email,
@@ -155,6 +168,7 @@ export default async function handler(req, res) {
         invitationId: invitation.invitation_id,
         role: role,
       },
+      notify: true,
     });
 
     // Update our invitation with Clerk's invitation ID
