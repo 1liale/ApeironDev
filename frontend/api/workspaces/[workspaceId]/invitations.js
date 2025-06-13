@@ -105,30 +105,17 @@ export default async function handler(req, res) {
   try {
     console.log("Attempting to verify token...");
     
-    // Try using the Clerk client to verify the session instead
-    let userId;
-    try {
-      // Alternative approach: use Clerk client to verify session
-      const sessionToken = await clerkClient.verifyToken(token);
-      userId = sessionToken.sub;
-      console.log("Token verified successfully with Clerk client");
-    } catch (clerkError) {
-      console.log("Clerk client verification failed, trying verifyToken function...");
-      // Fallback to the original verifyToken function
-      const verifiedToken = await verifyToken(token, {
-        secretKey: process.env.CLERK_SECRET_KEY,
-      });
-      
-      if (!verifiedToken || !verifiedToken.sub) {
-        return res.status(401).json({ error: "Invalid session token" });
-      }
-      userId = verifiedToken.sub;
-      console.log("Token verified successfully with verifyToken function");
+    // Use the standard verifyToken function with proper configuration
+    const verifiedToken = await verifyToken(token, {
+      secretKey: process.env.CLERK_SECRET_KEY,
+    });
+    
+    if (!verifiedToken || !verifiedToken.sub) {
+      return res.status(401).json({ error: "Invalid session token" });
     }
-
-    if (!userId) {
-      return res.status(401).json({ error: "Could not extract user ID from token" });
-    }
+    
+    const userId = verifiedToken.sub;
+    console.log("Token verified successfully, userId:", userId);
 
     if (!["viewer", "editor", "owner"].includes(role)) {
       return res

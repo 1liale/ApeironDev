@@ -79,7 +79,7 @@ export const ShareWorkspaceDialog = ({
 
     setIsInviting(true);
     try {
-      const token = await getToken({ template: "integration_firebase" });
+      const token = await getToken();
       if (!token) {
         toast.error("Authentication required");
         return;
