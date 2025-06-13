@@ -6,8 +6,8 @@ import React, {
   useCallback,
   ReactNode,
 } from "react";
-import { useAuth } from "@clerk/react-router";
-import { useParams, useNavigate } from "react-router-dom";
+import { useAuth, useUser } from "@clerk/react-router";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { listWorkspaces, createWorkspace } from "@/lib/api";
 import { fetchWorkspaceDetails } from "@/lib/workspace";
 import type {
@@ -20,6 +20,7 @@ import type {
   WorkspaceContextType,
   CachedWorkspaces,
   CachedManifestData,
+  InvitationState,
 } from "@/types/contexts";
 import { toast } from "@/components/ui/sonner";
 import { auth } from "@/lib/firebase";
@@ -35,8 +36,13 @@ const SESSION_STORAGE_SELECTED_WORKSPACE_ID_KEY = "app_selected_workspace_id";
 export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
-  const { isSignedIn, userId } = useAuth();
-  const { workspaceId: workspaceIdFromUrl } = useParams<{ workspaceId: string }>();
+  const { isSignedIn, userId, getToken } = useAuth();
+  const { user } = useUser();
+  const { workspaceId: workspaceIdFromUrl, invitationId } = useParams<{ 
+    workspaceId: string; 
+    invitationId: string; 
+  }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummaryItem[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] =
@@ -68,6 +74,19 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   const [isLoadingWorkspaceContents, setIsLoadingWorkspaceContents] =
     useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+
+  // Invitation state
+  const clerkTicket = searchParams.get('__clerk_ticket');
+  const isInvitationFlow = !!invitationId;
+  const [invitation, setInvitation] = useState<InvitationState>({
+    isProcessing: false,
+    status: "idle",
+    message: "",
+    invitationId: invitationId || null,
+    clerkTicket: clerkTicket,
+    requiresSignup: isInvitationFlow && !isSignedIn && !!clerkTicket,
+    requiresProcessing: isInvitationFlow && isSignedIn && !!clerkTicket,
+  });
 
   const updateCurrentWorkspaceManifest = useCallback(
     (newManifest: ClientSideWorkspaceFileManifestItem[]) => {
@@ -373,7 +392,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
 
   const createNewWorkspace = useCallback(
     async (name: string): Promise<WorkspaceSummaryItem | null> => {
-      if (!isSignedIn) {
+      if (!isSignedIn || !userId) {
         toast.error("You must be signed in to create a workspace.");
         return null;
       }
@@ -382,7 +401,16 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
       try {
         const token = await auth.currentUser?.getIdToken();
         if (!token) throw new Error("Authentication token not available.");
-        const body: CreateWorkspaceRequestBody = { name };
+
+        // Get user information from Clerk
+        const userEmail = user?.emailAddresses?.[0]?.emailAddress || "";
+        const userName = `${user.firstName} ${user.lastName}`.trim();
+
+        const body: CreateWorkspaceRequestBody = { 
+          name,
+          userEmail,
+          userName,
+        };
 
         const newWsData = (await createWorkspace(
           body,
@@ -413,8 +441,105 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         setIsCreatingWorkspace(false);
       }
     },
-    [isSignedIn, fetchWorkspaces, handleSelectWorkspace],
+    [isSignedIn, userId, user, fetchWorkspaces, handleSelectWorkspace],
   );
+
+  const processWorkspaceInvitation = useCallback(
+    async (invitationId: string): Promise<void> => {
+      if (!isSignedIn) {
+        throw new Error("Authentication required to accept invitation");
+      }
+
+      setInvitation(prev => ({
+        ...prev,
+        isProcessing: true,
+        status: "processing",
+        message: "Adding you to the workspace...",
+      }));
+
+      try {
+        const token = await getToken();
+        if (!token) {
+          throw new Error("Authentication token not available");
+        }
+
+        const response = await fetch(`/api/invitations/${invitationId}/accept`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to accept the invitation");
+        }
+
+        setInvitation(prev => ({
+          ...prev,
+          status: "success",
+          message: "Success! Redirecting to your workspace...",
+        }));
+
+        sessionStorage.setItem(
+          "invitation_status",
+          JSON.stringify({
+            status: "success",
+            message: "Successfully joined the workspace!",
+          })
+        );
+
+        // Redirect to the workspace
+        setTimeout(() => {
+          navigate(`/workspace/${data.workspaceId}`);
+        }, 1500);
+
+      } catch (error) {
+        const e = error as Error;
+        console.error("Workspace invitation error:", e);
+        
+        setInvitation(prev => ({
+          ...prev,
+          status: "error",
+          message: e.message,
+        }));
+
+        sessionStorage.setItem(
+          "invitation_status",
+          JSON.stringify({
+            status: "error",
+            message: e.message,
+          })
+        );
+
+        setTimeout(() => navigate("/"), 3000);
+      } finally {
+        setInvitation(prev => ({
+          ...prev,
+          isProcessing: false,
+        }));
+      }
+    },
+    [isSignedIn, getToken, navigate]
+  );
+
+  // Update invitation state when auth state changes
+  useEffect(() => {
+    setInvitation(prev => ({
+      ...prev,
+      requiresSignup: isInvitationFlow && !isSignedIn && !!clerkTicket,
+      requiresProcessing: isInvitationFlow && isSignedIn && !!clerkTicket,
+    }));
+  }, [isSignedIn, isInvitationFlow, clerkTicket]);
+
+  // Handle invalid invitation links
+  useEffect(() => {
+    if (isInvitationFlow && !clerkTicket) {
+      toast.error("Invalid invitation link. Please check your email for the correct link.");
+      setTimeout(() => navigate("/"), 2000);
+    }
+  }, [isInvitationFlow, clerkTicket, navigate]);
 
   const value: WorkspaceContextType = {
     workspaces,
@@ -427,6 +552,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     isLoadingManifest,
     isLoadingWorkspaceContents,
     isCreatingWorkspace,
+    invitation,
     selectWorkspace: handleSelectWorkspace,
     refreshWorkspaces: fetchWorkspaces,
     createNewWorkspace,
@@ -439,6 +565,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     removePathFromCache,
     updateCurrentWorkspaceManifest,
     refreshManifestOnly,
+    processWorkspaceInvitation,
   };
 
   return (

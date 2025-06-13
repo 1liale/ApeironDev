@@ -755,6 +755,8 @@ func (ac *ApiController) CreateWorkspace(c *gin.Context) {
 		MembershipID: membershipID,
 		WorkspaceID:  newWorkspaceID,
 		UserID:       userID,
+		UserEmail:    req.UserEmail,
+		UserName:     req.UserName,
 		Role:         "owner",
 		JoinedAt:     now,
 	}
