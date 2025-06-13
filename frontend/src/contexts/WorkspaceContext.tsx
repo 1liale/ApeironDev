@@ -7,6 +7,7 @@ import React, {
   ReactNode,
 } from "react";
 import { useAuth } from "@clerk/react-router";
+import { useParams, useNavigate } from "react-router-dom";
 import { listWorkspaces, createWorkspace } from "@/lib/api";
 import { fetchWorkspaceDetails } from "@/lib/workspace";
 import type {
@@ -35,6 +36,8 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const { isSignedIn, userId } = useAuth();
+  const { workspaceId: workspaceIdFromUrl } = useParams<{ workspaceId: string }>();
+  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummaryItem[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] =
     useState<WorkspaceSummaryItem | null>(null);
@@ -47,6 +50,9 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   >(null);
   const [manifestAndVersionCache, setManifestAndVersionCache] = useState<
     Record<string, CachedManifestData>
+  >({});
+  const [lastManifestRefresh, setLastManifestRefresh] = useState<
+    Record<string, number>
   >({});
   const {
     fileContentCache,
@@ -95,6 +101,11 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
             manifest: updatedManifest,
           },
         }));
+        // Update the last refresh timestamp
+        setLastManifestRefresh((prev) => ({
+          ...prev,
+          [selectedWorkspace.workspaceId]: Date.now(),
+        }));
       }
     },
     [selectedWorkspace, currentWorkspaceManifest],
@@ -106,6 +117,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     setCurrentWorkspaceManifest(null);
     setCurrentWorkspaceVersion(null);
     setManifestAndVersionCache({});
+    setLastManifestRefresh({});
     setFileContentCache({});
     setIsLoadingWorkspaces(false);
     setIsLoadingManifest(false);
@@ -191,6 +203,24 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     }
   }, [isSignedIn, userId, fetchWorkspaces, resetWorkspaceState]);
 
+  // Effect to handle workspace selection from URL
+  useEffect(() => {
+    if (workspaceIdFromUrl && workspaces.length > 0) {
+      const workspaceFromUrl = workspaces.find(
+        (ws) => ws.workspaceId === workspaceIdFromUrl
+      );
+      if (workspaceFromUrl) {
+        if (selectedWorkspace?.workspaceId !== workspaceFromUrl.workspaceId) {
+          setSelectedWorkspace(workspaceFromUrl);
+        }
+      } else {
+        // Handle case where workspace ID in URL is invalid or not found
+        toast.error("Workspace not found.");
+        navigate("/");
+      }
+    }
+  }, [workspaceIdFromUrl, workspaces, selectedWorkspace, navigate]);
+
   const refreshWorkspace = useCallback(
     async (workspaceToRefresh: WorkspaceSummaryItem) => {
       const { workspaceId, name } = workspaceToRefresh;
@@ -214,6 +244,12 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         }));
         setCurrentWorkspaceManifest(manifest);
         setCurrentWorkspaceVersion(workspaceVersion);
+        
+        // Update the last refresh timestamp
+        setLastManifestRefresh((prev) => ({
+          ...prev,
+          [workspaceId]: Date.now(),
+        }));
 
         if (Object.keys(fileContents).length > 0) {
           setFileContentCache((prevCache) => ({
@@ -245,6 +281,17 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   const refreshManifestOnly = useCallback(
     async (workspaceToRefresh: WorkspaceSummaryItem) => {
       const { workspaceId, name } = workspaceToRefresh;
+      
+      // Check if we've refreshed recently to reduce unnecessary API calls
+      const lastRefresh = lastManifestRefresh[workspaceId];
+      const now = Date.now();
+      const REFRESH_THROTTLE_MS = 5000; // Don't refresh more than once per 5 seconds
+      
+      if (lastRefresh && (now - lastRefresh) < REFRESH_THROTTLE_MS) {
+        console.log(`Skipping manifest refresh for ${name} - recently refreshed`);
+        return;
+      }
+      
       try {
         const token = await auth.currentUser?.getIdToken();
         if (!token) throw new Error("Authentication token not available.");
@@ -261,6 +308,12 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         }));
         setCurrentWorkspaceManifest(manifest);
         
+        // Update the last refresh timestamp
+        setLastManifestRefresh((prev) => ({
+          ...prev,
+          [workspaceId]: now,
+        }));
+        
       } catch (error) {
         console.error(
           `Failed to refresh manifest for ${name}:`,
@@ -269,7 +322,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
         // Don't show toast error for manifest-only refresh as it's less critical
       }
     },
-    [currentWorkspaceVersion],
+    [currentWorkspaceVersion, lastManifestRefresh],
   );
 
   const setWorkspaceVersion = useCallback(
@@ -401,4 +454,4 @@ export const useWorkspace = (): WorkspaceContextType => {
     throw new Error("useWorkspace must be used within a WorkspaceProvider");
   }
   return context;
-}; 
+};

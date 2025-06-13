@@ -4,6 +4,7 @@ import {
   PlusCircle,
   FolderKanban,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +39,7 @@ interface WorkspaceSelectorProps {
   isCreatingWorkspace: boolean;
   onSelectWorkspace: (workspace: WorkspaceSummaryItem) => void;
   onCreateWorkspace: (name: string) => Promise<WorkspaceSummaryItem | null>;
+  onRefreshWorkspaces: () => Promise<void>;
 }
 
 export const WorkspaceSelector = ({
@@ -47,10 +49,12 @@ export const WorkspaceSelector = ({
   isCreatingWorkspace,
   onSelectWorkspace,
   onCreateWorkspace,
+  onRefreshWorkspaces,
 }: WorkspaceSelectorProps) => {
   const [isCreateWorkspaceDialogOpen, setIsCreateWorkspaceDialogOpen] =
     useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleCreateSubmit = async () => {
     if (!newWorkspaceName.trim()) {
@@ -62,6 +66,20 @@ export const WorkspaceSelector = ({
     if (newWs) {
         setNewWorkspaceName("");
         setIsCreateWorkspaceDialogOpen(false);
+    }
+  };
+
+  const handleRefreshWorkspaces = async () => {
+    if (isRefreshing || isLoadingWorkspaces) return;
+    
+    setIsRefreshing(true);
+    try {
+      await onRefreshWorkspaces();
+      toast.success("Workspace list refreshed");
+    } catch (error) {
+      toast.error("Failed to refresh workspaces");
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -89,7 +107,22 @@ export const WorkspaceSelector = ({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56">
-          <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex items-center justify-between">
+            Workspaces
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handleRefreshWorkspaces} 
+              disabled={isRefreshing || isLoadingWorkspaces}
+              className="h-4 w-4 p-0"
+            >
+              {isRefreshing ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3 h-3" />
+              )}
+            </Button>
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
           {isLoadingWorkspaces && (
             <DropdownMenuItem disabled>Loading...</DropdownMenuItem>
