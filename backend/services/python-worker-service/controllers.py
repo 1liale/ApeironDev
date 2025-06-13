@@ -1,12 +1,8 @@
 import subprocess
-import os
-import resource
-import logging # For type hinting, actual logger from configs
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone  # UTC timezone for ISO 8601 standardization
+from time_utils import now_iso8601  # Standardized ISO 8601 formatting
 from pathlib import Path
-import shutil
 import tempfile # Added for TemporaryDirectory
-import re
 
 from fastapi import APIRouter, HTTPException # Using APIRouter for modularity
 from google.cloud import firestore as google_firestore # For type hinting
@@ -89,7 +85,8 @@ def _update_firestore_job_status(job_id: str, job_doc_ref: google_firestore.Docu
         raise RuntimeError(f"Firestore update failed for job {job_id}") from e
 
 def _build_final_update_data(exec_status_code: int, output: str | None, error_details: str | None, current_status: str) -> dict:
-    completed_at_time = datetime.now(timezone.utc)
+    # Generate standardized ISO 8601 timestamp matching JavaScript toISOString()
+    completed_at_time = now_iso8601()  # Exact JavaScript toISOString() format
     data = {"updated_at": completed_at_time}
     
     if current_status.startswith("processing"):
@@ -122,7 +119,7 @@ async def execute_direct_task(payload: CloudTaskPayload):
     job_doc_ref = firestore_client.collection(COLLECTION_ID_JOBS).document(job_id)
     initial_status = "processing_direct"
     try:
-        _update_firestore_job_status(job_id, job_doc_ref, {"status": initial_status, "updated_at": datetime.now(timezone.utc)}, "initial status")
+        _update_firestore_job_status(job_id, job_doc_ref, {"status": initial_status, "updated_at": now_iso8601()}, "initial status")
     except RuntimeError:
         raise HTTPException(status_code=500, detail=f"Failed to set initial status for job {job_id}.")
 
@@ -156,7 +153,7 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
     initial_status = "processing_auth_workspace"
     try:
         # Set initial job status in Firestore
-        _update_firestore_job_status(job_id, job_doc_ref, {"status": initial_status, "updated_at": datetime.now(timezone.utc)}, "initial status")
+        _update_firestore_job_status(job_id, job_doc_ref, {"status": initial_status, "updated_at": now_iso8601()}, "initial status")
     except RuntimeError:
         raise HTTPException(status_code=500, detail=f"Failed to set initial status for job {job_id}.")
 
@@ -165,7 +162,7 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
         with tempfile.TemporaryDirectory(prefix=f"job_{job_id}_") as temp_dir_name: 
             workspace_exec_dir = Path(temp_dir_name)
             logger.info(f"Job {job_id}: Created temporary execution directory: {workspace_exec_dir}")
-            _update_firestore_job_status(job_id, job_doc_ref, {"status": "fetching_from_r2", "updated_at": datetime.now(timezone.utc)}, "fetching code")
+            _update_firestore_job_status(job_id, job_doc_ref, {"status": "fetching_from_r2", "updated_at": now_iso8601()}, "fetching code")
 
             if not payload.files:
                 msg = "No files found in job payload manifest to download."
@@ -202,7 +199,7 @@ async def execute_auth_task(payload: CloudTaskAuthPayload):
                 return {"job_id": job_id, "message": msg, "final_status": "failed"}
 
             # Update Firestore status before running the code
-            _update_firestore_job_status(job_id, job_doc_ref, {"status": "running_auth_workspace", "updated_at": datetime.now(timezone.utc)}, "running code")
+            _update_firestore_job_status(job_id, job_doc_ref, {"status": "running_auth_workspace", "updated_at": now_iso8601()}, "running code")
             
             # Execute the Python script from the temporary directory
             output, error_details, exec_status_code = _execute_python_script_in_dir(

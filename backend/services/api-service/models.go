@@ -15,12 +15,12 @@ type RequestBody struct {
 
 // Workspace represents a user's workspace in Firestore.
 type Workspace struct {
-	WorkspaceID      string    `json:"workspaceId" firestore:"workspace_id"`
-	Name             string    `json:"name" firestore:"name"`
-	CreatedBy        string    `json:"createdBy" firestore:"created_by"`
-	CreatedAt        time.Time `json:"createdAt" firestore:"created_at"`
-	UpdatedAt        time.Time `json:"updatedAt,omitempty" firestore:"updated_at,omitempty"`
-	WorkspaceVersion string    `json:"workspaceVersion,omitempty" firestore:"workspace_version,omitempty"` // Added for OCC
+	WorkspaceID      string `json:"workspaceId" firestore:"workspace_id"`
+	Name             string `json:"name" firestore:"name"`
+	CreatedBy        string `json:"createdBy" firestore:"created_by"`
+	CreatedAt        string `json:"createdAt" firestore:"created_at"`                                   // ISO 8601 string
+	UpdatedAt        string `json:"updatedAt,omitempty" firestore:"updated_at,omitempty"`              // ISO 8601 string
+	WorkspaceVersion string `json:"workspaceVersion,omitempty" firestore:"workspace_version,omitempty"` // Added for OCC
 }
 
 // CreateWorkspaceRequest defines the expected request body for creating a new workspace.
@@ -32,46 +32,46 @@ type CreateWorkspaceRequest struct {
 
 // CreateWorkspaceResponse is the response after creating a new workspace.
 type CreateWorkspaceResponse struct {
-	WorkspaceID    string    `json:"workspaceId"`
-	Name           string    `json:"name"`
-	CreatedBy      string    `json:"createdBy"`
-	CreatedAt      time.Time `json:"createdAt"`
-	InitialVersion string    `json:"initialVersion"` // Added initial version
+	WorkspaceID    string `json:"workspaceId"`
+	Name           string `json:"name"`
+	CreatedBy      string `json:"createdBy"`
+	CreatedAt      string `json:"createdAt"`      // ISO 8601 string
+	InitialVersion string `json:"initialVersion"` // Added initial version
 }
 
 // WorkspaceSummary defines the data structure for listing workspaces for a user.
 type WorkspaceSummary struct {
-	WorkspaceID string    `json:"workspaceId"`
-	Name        string    `json:"name"`
-	CreatedBy   string    `json:"createdBy"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UserRole    string    `json:"userRole"`
+	WorkspaceID string `json:"workspaceId"`
+	Name        string `json:"name"`
+	CreatedBy   string `json:"createdBy"`
+	CreatedAt   string `json:"createdAt"` // ISO 8601 string
+	UserRole    string `json:"userRole"`
 }
 
 // WorkspaceMembership links a user to a workspace with a specific role.
 type WorkspaceMembership struct {
-	MembershipID string    `json:"membershipId" firestore:"membership_id"`
-	WorkspaceID  string    `json:"workspaceId" firestore:"workspace_id"`
-	UserID       string    `json:"userId" firestore:"user_id"`
-	UserEmail    string    `json:"userEmail" firestore:"user_email"`
-	UserName     string    `json:"userName" firestore:"user_name"`
-	Role         string    `json:"role" firestore:"role"`
-	JoinedAt     time.Time `json:"joinedAt" firestore:"joined_at"`
+	MembershipID string `json:"membershipId" firestore:"membership_id"`
+	WorkspaceID  string `json:"workspaceId" firestore:"workspace_id"`
+	UserID       string `json:"userId" firestore:"user_id"`
+	UserEmail    string `json:"userEmail" firestore:"user_email"`
+	UserName     string `json:"userName" firestore:"user_name"`
+	Role         string `json:"role" firestore:"role"`
+	JoinedAt     string `json:"joinedAt" firestore:"joined_at"` // ISO 8601 string
 }
 
 // --- Structs for File Manifest ---
 
 // FileMetadata represents the metadata for a single file within a workspace.
 type FileMetadata struct {
-	FileID        string    `json:"fileId" firestore:"file_id"`
-	FilePath      string    `json:"filePath" firestore:"file_path"`
-	Type          string    `json:"type" firestore:"type"` // "file" or "folder"
-	R2ObjectKey   string    `json:"r2ObjectKey,omitempty" firestore:"r2_object_key,omitempty"`
-	Size          int64     `json:"size,omitempty" firestore:"size,omitempty"`
-	Hash          string    `json:"hash,omitempty" firestore:"hash,omitempty"`
-	CreatedAt     time.Time `json:"createdAt" firestore:"created_at"`
-	UpdatedAt     time.Time `json:"updatedAt" firestore:"updated_at"`
-	ContentURL    string    `json:"contentUrl,omitempty" firestore:"-"` 
+	FileID      string `json:"fileId" firestore:"file_id"`
+	FilePath    string `json:"filePath" firestore:"file_path"`
+	Type        string `json:"type" firestore:"type"` // "file" or "folder"
+	R2ObjectKey string `json:"r2ObjectKey,omitempty" firestore:"r2_object_key,omitempty"`
+	Size        int64  `json:"size,omitempty" firestore:"size,omitempty"`
+	Hash        string `json:"hash,omitempty" firestore:"hash,omitempty"`
+	CreatedAt   string `json:"createdAt" firestore:"created_at"`  // ISO 8601 string
+	UpdatedAt   string `json:"updatedAt" firestore:"updated_at"`  // ISO 8601 string
+	ContentURL  string `json:"contentUrl,omitempty" firestore:"-"` 
 }
 
 // WorkspaceManifestResponse is the response for GET /workspaces/:workspaceId/manifest
@@ -160,18 +160,18 @@ type ExecuteAuthResponse struct {
 
 // Job struct stores information about a code execution job.
 type Job struct {
-	Status         string    `json:"status" firestore:"status"`
-	Code           string    `json:"code,omitempty" firestore:"-"`
-	Language       string    `json:"language" firestore:"language"`
-	Input          string    `json:"input,omitempty" firestore:"-"`
-	Output         string    `json:"output,omitempty" firestore:"output,omitempty"`
-	Error          string    `json:"error,omitempty" firestore:"error,omitempty"`
-	SubmittedAt    time.Time `json:"submittedAt" firestore:"submitted_at"`
-	ExpiresAt      time.Time `json:"expiresAt,omitempty" firestore:"expires_at,omitempty"`
-	UserID         string    `json:"userID,omitempty" firestore:"user_id,omitempty"`
-	WorkspaceID    string    `json:"workspaceID,omitempty" firestore:"workspace_id,omitempty"`
-	EntrypointFile string    `json:"entrypointFile,omitempty" firestore:"entrypoint_file,omitempty"`
-	ExecutionType  string    `json:"executionType,omitempty" firestore:"execution_type,omitempty"`
+	Status         string `json:"status" firestore:"status"`
+	Code           string `json:"code,omitempty" firestore:"-"`
+	Language       string `json:"language" firestore:"language"`
+	Input          string `json:"input,omitempty" firestore:"-"`
+	Output         string `json:"output,omitempty" firestore:"output,omitempty"`
+	Error          string `json:"error,omitempty" firestore:"error,omitempty"`
+	SubmittedAt    string `json:"submittedAt" firestore:"submitted_at"`                 // ISO 8601 string
+	ExpiresAt      string `json:"expiresAt,omitempty" firestore:"expires_at,omitempty"` // ISO 8601 string
+	UserID         string `json:"userID,omitempty" firestore:"user_id,omitempty"`
+	WorkspaceID    string `json:"workspaceID,omitempty" firestore:"workspace_id,omitempty"`
+	EntrypointFile string `json:"entrypointFile,omitempty" firestore:"entrypoint_file,omitempty"`
+	ExecutionType  string `json:"executionType,omitempty" firestore:"execution_type,omitempty"`
 }
 
 // CloudTaskPayload is the structure for public code execution.

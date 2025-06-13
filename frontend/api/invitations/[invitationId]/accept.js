@@ -87,7 +87,7 @@ export default async function handler(req, res) {
         user_email: userInfo.email,
         user_name: userInfo.name,
         role: invitation.invitee_role,
-        joined_at: new Date().toISOString(),
+        joined_at: new Date().toISOString(), // Standardized ISO 8601 format matching backend helpers
       };
       const membershipRef = db
         .collection("workspace_memberships")

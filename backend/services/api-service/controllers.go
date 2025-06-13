@@ -425,9 +425,10 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 
 		// --- WRITE PHASE ---
 		// 1. Update workspace version and timestamp. This is the first write.
+		// Update workspace with new version and standardized ISO 8601 timestamp
 		err = tx.Update(wsDocRef, []firestore.Update{
 			{Path: "workspace_version", Value: req.WorkspaceVersion},
-			{Path: "updated_at", Value: time.Now().UTC()},
+			{Path: "updated_at", Value: NowISO8601()},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to increment workspace version: %w", err)
@@ -440,12 +441,13 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 
 			switch clientFile.Action {
 			case "upsert":
+				// Create file metadata with standardized ISO 8601 timestamps
 				newMeta := FileMetadata{
 					FileID:      clientFile.FileID,
 					FilePath:    clientFile.FilePath,
 					Type:        clientFile.Type,
 					R2ObjectKey: clientFile.R2ObjectKey,
-					UpdatedAt:   time.Now().UTC(),
+					UpdatedAt:   NowISO8601(), // Exact JavaScript toISOString() format
 				}
 
 				if clientFile.Type == "file" {
@@ -544,16 +546,17 @@ func (ac *ApiController) ExecuteCode(c *gin.Context) {
 	jobID := uuid.New().String()
 	ctx := c.Request.Context()
 
-	submittedAt := time.Now().UTC()
-	expiresAt := submittedAt.Add(15 * 24 * time.Hour) 
+	// Create job with standardized ISO 8601 timestamps
+	submittedAt := NowISO8601() // Exact JavaScript toISOString() format
+	expiresAt := TimeToISO8601(time.Now().UTC().Add(15 * 24 * time.Hour))
 
 	job := Job{
 		Status:      "queued",
 		Code:        reqBody.Code,
 		Language:    reqBody.Language,
 		Input:       reqBody.Input,
-		SubmittedAt: submittedAt,
-		ExpiresAt:   expiresAt,
+		SubmittedAt: submittedAt, // Standardized ISO 8601 with milliseconds
+		ExpiresAt:   expiresAt,   // Standardized ISO 8601 with milliseconds
 	}
 
 	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
@@ -737,7 +740,8 @@ func (ac *ApiController) CreateWorkspace(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	now := time.Now().UTC()
+	// Use standardized ISO 8601 timestamps for consistent time formatting
+	now := NowISO8601() // Exact JavaScript toISOString() format
 	newWorkspaceID := uuid.New().String()
 	initialVersion := "1"
 
@@ -745,7 +749,7 @@ func (ac *ApiController) CreateWorkspace(c *gin.Context) {
 		WorkspaceID:      newWorkspaceID,
 		Name:             req.Name,
 		CreatedBy:        userID,
-		CreatedAt:        now,
+		CreatedAt:        now, // Standardized ISO 8601 with milliseconds
 		WorkspaceVersion: initialVersion,
 	}
 	workspaceDocRef := ac.FirestoreClient.Collection("workspaces").Doc(newWorkspaceID)
@@ -758,7 +762,7 @@ func (ac *ApiController) CreateWorkspace(c *gin.Context) {
 		UserEmail:    req.UserEmail,
 		UserName:     req.UserName,
 		Role:         "owner",
-		JoinedAt:     now,
+		JoinedAt:     now, // Standardized ISO 8601 timestamp
 	}
 	membershipDocRef := ac.FirestoreClient.Collection("workspace_memberships").Doc(membershipID)
 
@@ -945,11 +949,12 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	logCtx = logCtx.WithField("job_id", jobID)
 
 	jobDocRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
+	// Create authenticated job with standardized ISO 8601 timestamp
 	if _, err := jobDocRef.Set(ctx, Job{
 		Status:         "queued",
 		Language:       req.Language,
 		Input:          req.Input,
-		SubmittedAt:    time.Now().UTC(),
+		SubmittedAt:    NowISO8601(), // Exact JavaScript toISOString() format
 		UserID:         userID,
 		WorkspaceID:    workspaceID,
 		EntrypointFile: entrypointFile,
