@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/CodeEditor/LeftPanel/Sidebar";
 import { EditorPanel } from "@/components/CodeEditor/EditorPanel/EditorPanel";
 import { RightPanel } from "@/components/CodeEditor/RightPanel/RightPanel";
@@ -90,6 +91,24 @@ const AppLayout = () => {
     // Dispatch a custom event so ClerkThemeProviderWrapper can react immediately
     window.dispatchEvent(new CustomEvent("themeChanged"));
   }, [isDark]);
+
+  useEffect(() => {
+    const statusItem = sessionStorage.getItem("invitation_status");
+    if (statusItem) {
+      try {
+        const { status, message } = JSON.parse(statusItem);
+        if (status === "success") {
+          toast.success(message);
+        } else if (status === "error") {
+          toast.error(message);
+        }
+      } catch (e) {
+        console.error("Failed to parse invitation status from sessionStorage", e);
+      } finally {
+        sessionStorage.removeItem("invitation_status");
+      }
+    }
+  }, []);
 
   return (
     <CodeExecutionProvider>

@@ -144,8 +144,11 @@ export const CodeExecutionProvider = ({
 
         if (response.finalWorkspaceVersion) {
           setWorkspaceVersion(response.finalWorkspaceVersion);
-          // Refresh only the manifest to reflect server state, without changing version
-          await refreshManifestOnly(selectedWorkspace);
+          // Only refresh manifest if the workspace version actually changed
+          // This reduces unnecessary API calls to the backend
+          if (response.finalWorkspaceVersion !== currentWorkspaceVersion?.toString()) {
+            await refreshManifestOnly(selectedWorkspace);
+          }
         }
 
         if (!response.job_id) {

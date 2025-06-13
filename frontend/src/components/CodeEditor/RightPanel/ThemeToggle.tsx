@@ -10,9 +10,9 @@ export const ThemeToggle = ({ isDark, onToggleTheme }: ThemeToggleProps) => {
   return (
     <Button
       variant="ghost"
-      size="sm"
+      size="icon"
       onClick={onToggleTheme}
-      className="text-foreground hover:text-foreground hover:bg-accent"
+      className="text-foreground hover:text-foreground hover:bg-accent" 
     >
       {isDark ? (
         <Sun className="w-4 h-4" />

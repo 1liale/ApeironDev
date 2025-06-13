@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import NotFound from "./pages/NotFound";
 import { ClerkLoaded } from "@clerk/react-router";
 import HomePage from "./pages/HomePage";
+import InvitationHandler from "./components/InvitationHandler";
 import { FirebaseAuthProvider } from "./contexts/FirebaseAuthProvider";
 import { useState, useEffect } from 'react';
 import { OnboardingModal } from '@/components/OnboardingModal';
@@ -28,6 +29,11 @@ const App = () => {
       <FirebaseAuthProvider>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/:workspaceId" element={<HomePage />} />
+          <Route
+            path="/accept-workspace-invite/:invitationId"
+            element={<InvitationHandler />}
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
         {showOnboardingModal && <OnboardingModal isOpen={showOnboardingModal} onOpenChange={setShowOnboardingModal} />}
