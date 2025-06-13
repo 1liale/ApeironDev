@@ -1,4 +1,4 @@
-import { verifyToken } from "@clerk/backend";
+import { verifyToken, createClerkClient } from "@clerk/backend";
 import admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 
@@ -11,6 +11,11 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+
+// Initialize Clerk client
+const clerkClient = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY,
+});
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -31,14 +36,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Verify the user's token to get their ID
-    const verifiedToken = await verifyToken(token, {
-      jwtKey: process.env.CLERK_JWT_KEY,
-    });
-    if (!verifiedToken || !verifiedToken.sub) {
-      return res.status(401).json({ error: "Invalid session token" });
+    console.log("Attempting to verify token for invitation acceptance...");
+    
+    // Try using the Clerk client to verify the session instead
+    let userId;
+    try {
+      // Alternative approach: use Clerk client to verify session
+      const sessionToken = await clerkClient.verifyToken(token);
+      userId = sessionToken.sub;
+      console.log("Token verified successfully with Clerk client");
+    } catch (clerkError) {
+      console.log("Clerk client verification failed, trying verifyToken function...");
+      // Fallback to the original verifyToken function
+      const verifiedToken = await verifyToken(token, {
+        secretKey: process.env.CLERK_SECRET_KEY,
+      });
+      
+      if (!verifiedToken || !verifiedToken.sub) {
+        return res.status(401).json({ error: "Invalid session token" });
+      }
+      userId = verifiedToken.sub;
+      console.log("Token verified successfully with verifyToken function");
     }
-    const userId = verifiedToken.sub;
+
+    if (!userId) {
+      return res.status(401).json({ error: "Could not extract user ID from token" });
+    }
 
     // Use a transaction to ensure atomicity
     const { workspaceId, role } = await db.runTransaction(async (transaction) => {
