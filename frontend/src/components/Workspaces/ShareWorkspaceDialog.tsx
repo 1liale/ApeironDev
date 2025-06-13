@@ -106,7 +106,7 @@ export const ShareWorkspaceDialog = ({
       if (data.success) {
         toast.success(`Invitation sent to ${email}`);
       } else {
-        toast.error(data.error);
+        throw new Error(data.error || "Failed to send invitation");
       }
     } catch (error) {
       console.error("Invitation error:", error);
