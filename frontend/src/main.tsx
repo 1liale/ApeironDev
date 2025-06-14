@@ -6,6 +6,7 @@ import { ClerkProvider } from '@clerk/react-router'
 import { BrowserRouter } from 'react-router-dom'
 import { dark } from '@clerk/themes'
 import type { Appearance } from '@clerk/types'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // Import your publishable key from environment variables
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
@@ -13,6 +14,20 @@ const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 if (!PUBLISHABLE_KEY) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY")
 }
+
+// Create a QueryClient instance
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Don't refetch on window focus by default
+      refetchOnWindowFocus: false,
+      // Don't refetch on reconnect by default
+      refetchOnReconnect: false,
+      // Retry failed requests only once
+      retry: 1,
+    },
+  },
+})
 
 // Wrapper component to manage Clerk's theme based on localStorage
 const ClerkThemeProviderWrapper = ({ children }: { children: React.ReactNode }) => {
@@ -68,9 +83,11 @@ const ClerkThemeProviderWrapper = ({ children }: { children: React.ReactNode }) 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <ClerkThemeProviderWrapper>
-        <App />
-      </ClerkThemeProviderWrapper>
+      <QueryClientProvider client={queryClient}>
+        <ClerkThemeProviderWrapper>
+          <App />
+        </ClerkThemeProviderWrapper>
+      </QueryClientProvider>
     </BrowserRouter>
   </React.StrictMode>
 )

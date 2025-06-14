@@ -1,7 +1,13 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+
+import { detectWorkspaceChanges, createFileMaps } from "@/utils/workspaceUtils";
+import {
+  performFileUploads,
+  createConfirmSyncPayload,
+} from "@/utils/syncUtils";
 import { WorkspaceConflictError } from "@/types/errors";
-import { calculateHash } from "./hashUtils";
+
 import type {
   ExecuteRequestBody,
   ExecuteResponse,
@@ -9,7 +15,6 @@ import type {
   CreateWorkspaceResponse,
   WorkspaceFileManifestItem,
   WorkspaceManifestResponse,
-  SyncFileClientStateAPI,
   SyncRequestAPI,
   SyncResponseAPI,
   ConfirmSyncRequestAPI,
@@ -18,8 +23,9 @@ import type {
   ExecuteAuthRequestBody,
   WorkspaceSummaryItem,
   ExecuteCodeAuthResponse,
-  FileActionAPI,
 } from "@/types/api";
+
+// ===== BASIC API CALLS =====
 
 export async function executeCode(
   body: ExecuteRequestBody
@@ -84,7 +90,7 @@ export async function createWorkspace(
   return workspaceData;
 }
 
-export async function getWorkspaceManifestFromServer(
+export async function getWorkspaceManifest(
   workspaceId: string,
   authToken: string
 ): Promise<WorkspaceManifestResponse> {
@@ -100,11 +106,9 @@ export async function getWorkspaceManifestFromServer(
   );
 
   if (!response.ok) {
-    const errorData = await response
-      .json()
-      .catch(() => ({
-        message: "Failed to fetch workspace manifest and parse error",
-      }));
+    const errorData = await response.json().catch(() => ({
+      message: "Failed to fetch workspace manifest and parse error",
+    }));
     console.error(
       "Get Workspace Manifest API Error:",
       response.status,
@@ -137,9 +141,32 @@ export async function getWorkspaceManifestFromServer(
   return manifestData as WorkspaceManifestResponse;
 }
 
+export async function listWorkspaces(
+  authToken: string
+): Promise<WorkspaceSummaryItem[]> {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response
+      .json()
+      .catch(() => ({ message: "Failed to list workspaces and parse error" }));
+    console.error("List Workspaces API Error:", response.status, errorData);
+    throw new Error(
+      errorData.error || `HTTP error! status: ${response.status}`
+    );
+  }
+  return (await response.json()) as WorkspaceSummaryItem[];
+}
+
 export async function syncWorkspace(
   workspaceId: string,
-  payload: SyncRequestAPI, // Includes workspaceVersion and file states
+  payload: SyncRequestAPI,
   authToken: string
 ): Promise<SyncResponseAPI> {
   const response = await fetch(
@@ -155,11 +182,9 @@ export async function syncWorkspace(
   );
 
   if (!response.ok) {
-    const errorData = await response
-      .json()
-      .catch(() => ({
-        message: "Sync API call failed and could not parse error",
-      }));
+    const errorData = await response.json().catch(() => ({
+      message: "Sync API call failed and could not parse error",
+    }));
     console.error("Sync API Error:", response.status, errorData);
     // Try to return a SyncResponseAPI compatible error structure if possible
     if (response.status === 409) {
@@ -168,7 +193,7 @@ export async function syncWorkspace(
         status: "workspace_conflict",
         actions: [],
         errorMessage: errorData.errorMessage || "Workspace version conflict.",
-        newWorkspaceVersion: errorData.newWorkspaceVersion, // Assuming backend might send current version on conflict
+        newWorkspaceVersion: errorData.newWorkspaceVersion,
       };
     }
     throw new Error(
@@ -180,7 +205,7 @@ export async function syncWorkspace(
 
 export async function confirmSyncWorkspace(
   workspaceId: string,
-  payload: ConfirmSyncRequestAPI, // Includes workspaceVersion and confirmed file operations
+  payload: ConfirmSyncRequestAPI,
   authToken: string
 ): Promise<ConfirmSyncResponseAPI> {
   const response = await fetch(
@@ -196,11 +221,9 @@ export async function confirmSyncWorkspace(
   );
 
   if (!response.ok) {
-    const errorData = await response
-      .json()
-      .catch(() => ({
-        message: "Confirm Sync API call failed and could not parse error",
-      }));
+    const errorData = await response.json().catch(() => ({
+      message: "Confirm Sync API call failed and could not parse error",
+    }));
     console.error("Confirm Sync API Error:", response.status, errorData);
     throw new Error(
       errorData.error ||
@@ -210,158 +233,11 @@ export async function confirmSyncWorkspace(
   return (await response.json()) as ConfirmSyncResponseAPI;
 }
 
-export async function executeCodeAuth(
+export async function executeCodeAuthCore(
   workspaceId: string,
   authToken: string,
-  filesInEditor: ClientFileState[],
-  executionDetails: ExecuteAuthRequestBody,
-  currentLocalManifestItems: WorkspaceFileManifestItem[],
-  currentLocalWorkspaceVersion: string
+  executionDetails: ExecuteAuthRequestBody
 ): Promise<ExecuteCodeAuthResponse> {
-  // 1. Determine local changes to create the initial sync request
-  const localManifestMap = new Map(
-    currentLocalManifestItems.map((item) => [item.filePath, item])
-  );
-  const editorFileMap = new Map(
-    filesInEditor.map((file) => [file.filePath, file])
-  );
-  const localSyncStates: SyncFileClientStateAPI[] = [];
-
-  // Check for new and modified files
-  for (const file of filesInEditor) {
-    const manifestItem = localManifestMap.get(file.filePath);
-    if (file.type === 'folder') {
-        if (!manifestItem) {
-            localSyncStates.push({ filePath: file.filePath, action: 'new', type: 'folder' });
-        }
-        // Note: folders can't be "modified" - they're either new or unchanged
-        continue; // No hash calculation for folders
-    }
-    const currentHash = calculateHash(file.content ?? '');
-    if (!manifestItem) {
-      localSyncStates.push({
-        filePath: file.filePath,
-        clientHash: currentHash,
-        action: "new",
-        type: "file",
-      });
-    } else if (manifestItem.hash !== currentHash) {
-      localSyncStates.push({
-        filePath: file.filePath,
-        clientHash: currentHash,
-        action: "modified",
-        type: "file",
-      });
-    }
-  }
-
-  // Check for deleted files or folders
-  for (const manifestItem of currentLocalManifestItems) {
-    if (!editorFileMap.has(manifestItem.filePath)) {
-      localSyncStates.push({
-        filePath: manifestItem.filePath,
-        action: "deleted",
-        type: manifestItem.type,
-      });
-    }
-  }
-
-  if (localSyncStates.length > 0) {
-    // 2. First phase of 2PC: Call /sync to get actions
-    const syncRequest: SyncRequestAPI = {
-      workspaceVersion: currentLocalWorkspaceVersion,
-      files: localSyncStates,
-    };
-    const syncResponse = await syncWorkspace(
-      workspaceId,
-      syncRequest,
-      authToken
-    );
-
-    if (syncResponse.status === "workspace_conflict") {
-      throw new WorkspaceConflictError(
-        syncResponse.errorMessage || "Workspace version conflict during sync.",
-        workspaceId,
-        syncResponse.newWorkspaceVersion
-      );
-    }
-    if (syncResponse.status === "error") {
-      throw new Error(syncResponse.errorMessage || "Unknown error during sync.");
-    }
-
-    // 3. Perform client-side actions (uploads) only if needed
-    const actionsWithPresignedUrls = syncResponse.actions;
-    
-    // 2. Upload files that the server requested
-    const uploadPromises = actionsWithPresignedUrls
-      .filter((action) => action.actionRequired === "upload" && action.type === 'file')
-      .map(async (action) => {
-        const fileToUpload = editorFileMap.get(action.filePath);
-        if (fileToUpload && action.presignedUrl) {
-          try {
-            const uploadResponse = await fetch(action.presignedUrl, {
-              method: "PUT",
-              body: fileToUpload.content,
-              headers: {
-                "Content-Type": "application/octet-stream",
-              },
-            });
-            if (!uploadResponse.ok) {
-              throw new Error(`Upload failed with status: ${uploadResponse.status}`);
-            }
-            return uploadResponse;
-          } catch (error) {
-            throw new Error(`Failed to upload ${action.filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
-        }
-        return Promise.reject(
-          new Error(`File not found or no presigned URL for ${action.filePath}`)
-        );
-      });
-
-    if (uploadPromises.length > 0) {
-      await Promise.all(uploadPromises);
-    }
-
-    // 4. Second phase of 2PC: Call /sync/confirm only if we have actions to confirm
-    if (syncResponse.newWorkspaceVersion && actionsWithPresignedUrls.some(action => 
-      action.actionRequired === "upload" || action.actionRequired === "delete")) {
-      const payloadForConfirm: ConfirmSyncRequestAPI = {
-        workspaceVersion: syncResponse.newWorkspaceVersion!,
-        syncActions: actionsWithPresignedUrls
-          .filter((action) => action.actionRequired === "upload" || action.actionRequired === "delete")
-          .filter((action) => action.fileId && action.r2ObjectKey) // Ensure we have required fields
-          .map((action): FileActionAPI => {
-            const fileState = editorFileMap.get(action.filePath);
-            const content = fileState?.content ?? '';
-            return {
-              filePath: action.filePath,
-              fileId: action.fileId!,
-              r2ObjectKey: action.r2ObjectKey,
-              action: action.actionRequired === 'upload' ? 'upsert' : 'delete',
-              type: action.type,
-              // Only include hash and size for files
-              clientHash: action.type === 'file' ? calculateHash(content) : undefined,
-              size: action.type === 'file' ? new Blob([content]).size : undefined,
-            };
-          }),
-      };
-
-      const confirmResponse = await confirmSyncWorkspace(
-        workspaceId,
-        payloadForConfirm,
-        authToken
-      );
-      
-      if (confirmResponse.status !== "success") {
-        throw new Error(
-          confirmResponse.errorMessage || "Failed to confirm sync."
-        );
-      }
-    }
-  }
-
-  // 5. Execute code
   const response = await fetch(
     `${API_BASE_URL}/api/workspaces/${workspaceId}/execute`,
     {
@@ -384,25 +260,86 @@ export async function executeCodeAuth(
   return (await response.json()) as ExecuteCodeAuthResponse;
 }
 
-export async function listWorkspaces(
-  authToken: string
-): Promise<WorkspaceSummaryItem[]> {
-  const response = await fetch(`${API_BASE_URL}/api/workspaces`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      "Content-Type": "application/json",
-    },
-  });
+/**
+ * Full sync + execute flow - always cacheable by TanStack Query
+ * Performs sync only when workspace changes are detected
+ */
+export async function executeCodeAuth(
+  workspaceId: string,
+  authToken: string,
+  filesInEditor: ClientFileState[],
+  executionDetails: ExecuteAuthRequestBody,
+  currentLocalManifestItems: WorkspaceFileManifestItem[],
+  currentLocalWorkspaceVersion: string
+): Promise<ExecuteCodeAuthResponse> {
+  // Detect changes for sync
+  const localSyncStates = detectWorkspaceChanges(
+    filesInEditor,
+    currentLocalManifestItems
+  );
 
-  if (!response.ok) {
-    const errorData = await response
-      .json()
-      .catch(() => ({ message: "Failed to list workspaces and parse error" }));
-    console.error("List Workspaces API Error:", response.status, errorData);
-    throw new Error(
-      errorData.error || `HTTP error! status: ${response.status}`
+  if (localSyncStates.length > 0) {
+    console.log(
+      "Workspace changes detected - performing sync + execute",
+      localSyncStates
     );
+
+    // Create file maps for sync operations
+    const { editorFileMap } = createFileMaps(
+      filesInEditor,
+      currentLocalManifestItems
+    );
+
+    // Phase 1: Sync request
+    const syncRequest: SyncRequestAPI = {
+      workspaceVersion: currentLocalWorkspaceVersion,
+      files: localSyncStates,
+    };
+    const syncResponse = await syncWorkspace(
+      workspaceId,
+      syncRequest,
+      authToken
+    );
+
+    // Handle sync response errors
+    if (syncResponse.status === "workspace_conflict") {
+      throw new WorkspaceConflictError(
+        syncResponse.errorMessage || "Workspace version conflict during sync.",
+        workspaceId,
+        syncResponse.newWorkspaceVersion
+      );
+    }
+    if (syncResponse.status === "error") {
+      throw new Error(
+        syncResponse.errorMessage || "Unknown error during sync."
+      );
+    }
+
+    // Phase 2: File uploads
+    await performFileUploads(syncResponse.actions, editorFileMap);
+
+    // Phase 3: Confirm sync (only happens if server provided a new version)
+    if (syncResponse.newWorkspaceVersion) {
+      const confirmPayload = createConfirmSyncPayload(
+        syncResponse.newWorkspaceVersion,
+        syncResponse.actions,
+        editorFileMap
+      );
+
+      const confirmResponse = await confirmSyncWorkspace(
+        workspaceId,
+        confirmPayload,
+        authToken
+      );
+
+      if (confirmResponse.status !== "success") {
+        throw new Error(
+          confirmResponse.errorMessage || "Failed to confirm sync."
+        );
+      }
+    }
   }
-  return (await response.json()) as WorkspaceSummaryItem[];
+
+  // Execute code
+  return executeCodeAuthCore(workspaceId, authToken, executionDetails);
 }

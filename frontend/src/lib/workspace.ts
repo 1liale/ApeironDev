@@ -1,4 +1,4 @@
-import { getWorkspaceManifestFromServer } from './api';
+import { getWorkspaceManifest } from './api';
 import { toast } from '@/components/ui/sonner';
 
 // Function to fetch file content using a presigned URL
@@ -22,7 +22,7 @@ export async function fetchWorkspaceDetails(
   workspaceId: string,
   token: string,
 ) {
-  const manifestResponse = await getWorkspaceManifestFromServer(
+  const manifestResponse = await getWorkspaceManifest(
     workspaceId,
     token,
   );

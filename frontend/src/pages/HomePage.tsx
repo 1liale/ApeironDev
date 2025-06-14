@@ -21,7 +21,6 @@ import { Spinner } from "@/components/ui/spinner";
 
 const AppLayout = () => {
   const { isSignedIn } = useAuth();
-  const { openSignUp } = useClerk();
   const { 
     selectedWorkspace, 
     fileContentCache, 
@@ -29,8 +28,6 @@ const AppLayout = () => {
     isLoadingWorkspaces,
     isLoadingManifest,
     isLoadingWorkspaceContents,
-    invitation,
-    processWorkspaceInvitation,
   } = useWorkspace();
   
   const [activeFile, setActiveFile] = useState<string>(isSignedIn ? "" : "main.py");
@@ -43,10 +40,9 @@ const AppLayout = () => {
 
   const isContentLoading = useMemo(() => {
     if (!isSignedIn) return false; // No loading for unauthenticated view
-    if (invitation.invitationId) return false; // Invitation flow has its own loading states
     // Content is loading if we are fetching workspaces, the manifest, or the files.
     return isLoadingWorkspaces || isLoadingManifest || isLoadingWorkspaceContents;
-  }, [isSignedIn, invitation.invitationId, isLoadingWorkspaces, isLoadingManifest, isLoadingWorkspaceContents]);
+  }, [isSignedIn, isLoadingWorkspaces, isLoadingManifest, isLoadingWorkspaceContents]);
 
   const fileContent = useMemo(() => {
     // Show nothing while loading, as the spinner will be displayed.
@@ -114,19 +110,7 @@ const AppLayout = () => {
     }
   }, []);
 
-  // Handle invitation processing when user is signed in
-  useEffect(() => {
-    if (invitation.requiresProcessing && invitation.invitationId && invitation.status === "idle") {
-      processWorkspaceInvitation(invitation.invitationId);
-    }
-  }, [invitation.requiresProcessing, invitation.invitationId, invitation.status, processWorkspaceInvitation]);
 
-  // Handle opening signup modal for invitations
-  useEffect(() => {
-    if (invitation.requiresSignup) {
-      openSignUp();
-    }
-  }, [invitation.requiresSignup, openSignUp]);
 
   // Regular app layout
   return (

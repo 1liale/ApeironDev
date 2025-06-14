@@ -39,16 +39,6 @@ export interface CachedManifestData {
   version: string | number;
 }
 
-export interface InvitationState {
-  isProcessing: boolean;
-  status: "idle" | "processing" | "success" | "error";
-  message: string;
-  invitationId: string | null;
-  clerkTicket: string | null;
-  requiresSignup: boolean;
-  requiresProcessing: boolean;
-}
-
 export interface WorkspaceContextState {
   workspaces: WorkspaceSummaryItem[];
   selectedWorkspace: WorkspaceSummaryItem | null;
@@ -60,8 +50,6 @@ export interface WorkspaceContextState {
   isLoadingManifest: boolean;
   isLoadingWorkspaceContents: boolean;
   isCreatingWorkspace: boolean;
-  // Invitation state
-  invitation: InvitationState;
 }
 
 export interface WorkspaceContextActions {
@@ -79,8 +67,6 @@ export interface WorkspaceContextActions {
     newManifest: ClientSideWorkspaceFileManifestItem[],
   ) => void;
   refreshManifestOnly: (workspace: WorkspaceSummaryItem) => Promise<void>;
-  // Invitation handling
-  processWorkspaceInvitation: (invitationId: string) => Promise<void>;
 }
 
 export type WorkspaceContextType = WorkspaceContextState &

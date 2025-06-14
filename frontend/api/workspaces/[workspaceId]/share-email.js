@@ -1,44 +1,11 @@
-import { verifyToken, createClerkClient } from "@clerk/backend";
-import admin from "firebase-admin";
+import { verifyToken } from "@clerk/backend";
 import { v4 as uuidv4 } from "uuid";
-
-// Initialize Firebase Admin SDK if not already initialized
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-}
-
-const db = admin.firestore();
-
-// Initialize Clerk client
-const clerkClient = createClerkClient({
-  secretKey: process.env.CLERK_SECRET_KEY,
-});
-
-// Helper function to check if user has permission to invite to workspace
-async function checkWorkspacePermission(userId, workspaceId) {
-  try {
-    const membershipQuery = await db
-      .collection("workspace_memberships")
-      .where("user_id", "==", userId)
-      .where("workspace_id", "==", workspaceId)
-      .limit(1)
-      .get();
-
-    if (membershipQuery.empty) {
-      return false;
-    }
-
-    const membership = membershipQuery.docs[0].data();
-    // Only owners can invite others
-    return membership.role === "owner";
-  } catch (error) {
-    console.error("Error checking workspace permission:", error);
-    return false;
-  }
-}
+import {
+  db,
+  clerkClient,
+  checkWorkspaceOwnerPermission,
+  getInviterInfo,
+} from "../../_lib/workspaceService";
 
 // Helper function to create invitation in Firestore
 async function createInvitation(workspaceId, inviteeEmail, role, inviterId, inviterInfo) {
@@ -54,9 +21,10 @@ async function createInvitation(workspaceId, inviteeEmail, role, inviterId, invi
     inviter_id: inviterId,
     inviter_email: inviterInfo.email,
     inviter_name: inviterInfo.name,
-    status: "pending",
+    status: "pending", // Email invitations start as "pending" until accepted
     created_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
+    invitation_type: "email", // Add type for consistency
   };
 
   await db
@@ -85,6 +53,8 @@ async function hasExistingInvitation(workspaceId, email) {
 }
 
 export default async function handler(req, res) {
+  console.log(`[SHARE-EMAIL] ${req.method} request received`);
+  
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -92,6 +62,8 @@ export default async function handler(req, res) {
   const { workspaceId } = req.query;
   const { email, role } = req.body;
   const token = req.headers.authorization?.replace("Bearer ", "");
+  
+  console.log(`[SHARE-EMAIL] Request for workspace: ${workspaceId}, email: ${email}, role: ${role}`);
   
   if (!token) {
     return res
@@ -105,9 +77,6 @@ export default async function handler(req, res) {
 
   // Extract and verify Clerk session token
   try {
-    console.log("Attempting to verify token...");
-    
-    // Use the standard verifyToken function with proper configuration
     const verifiedToken = await verifyToken(token, {
       secretKey: process.env.CLERK_SECRET_KEY,
     });
@@ -117,7 +86,7 @@ export default async function handler(req, res) {
     }
     
     const userId = verifiedToken.sub;
-    console.log("Token verified successfully, userId:", userId);
+    console.log(`[SHARE-EMAIL] User ${userId} inviting ${email} to workspace ${workspaceId}`);
 
     if (!["viewer", "editor", "owner"].includes(role)) {
       return res
@@ -126,15 +95,12 @@ export default async function handler(req, res) {
     }
 
     // Get inviter information from Clerk
-    const inviterUser = await clerkClient.users.getUser(userId);
-    const inviterInfo = {
-      email: inviterUser.emailAddresses?.[0]?.emailAddress || "",
-      name: `${inviterUser.firstName || ""} ${inviterUser.lastName || ""}`.trim(),
-    };
+    const inviterInfo = await getInviterInfo(userId);
 
     // Check if user has permission to invite to this workspace
-    const hasPermission = await checkWorkspacePermission(userId, workspaceId);
+    const hasPermission = await checkWorkspaceOwnerPermission(userId, workspaceId);
     if (!hasPermission) {
+      console.log(`[SHARE-EMAIL] Permission denied for user ${userId} on workspace ${workspaceId}`);
       return res
         .status(403)
         .json({
@@ -145,6 +111,7 @@ export default async function handler(req, res) {
     // Check for existing pending invitation
     const hasExisting = await hasExistingInvitation(workspaceId, email);
     if (hasExisting) {
+      console.log(`[SHARE-EMAIL] Duplicate invitation attempt for ${email} to workspace ${workspaceId}`);
       return res
         .status(409)
         .json({ error: "An invitation for this email already exists" });
@@ -152,13 +119,13 @@ export default async function handler(req, res) {
 
     // Create the invitation
     const invitation = await createInvitation(workspaceId, email, role, userId, inviterInfo);
+    console.log(`[SHARE-EMAIL] Created invitation ${invitation.invitation_id} for ${email}`);
 
     // Send email invitation using Clerk
-    // Ensure we have a valid base URL
     const baseUrl = process.env.APP_BASE_URL || 'https://www.apeirondev.tech';
-    const redirectUrl = `${baseUrl}/accept-workspace-invite/${invitation.invitation_id}`;
+    const redirectUrl = `${baseUrl}/invitations/${invitation.invitation_id}`;
     
-    console.log('Creating Clerk invitation with redirect URL:', redirectUrl);
+    console.log(`[SHARE-EMAIL] Sending Clerk invitation to ${email} with redirect: ${redirectUrl}`);
     
     const clerkInvitation = await clerkClient.invitations.createInvitation({
       emailAddress: email,
@@ -179,12 +146,14 @@ export default async function handler(req, res) {
         clerk_invitation_id: clerkInvitation.id,
       });
 
+    console.log(`[SHARE-EMAIL] Successfully sent invitation ${invitation.invitation_id} to ${email}`);
+
     return res.status(201).json({
       success: true,
       message: "Invitation sent successfully",
     });
   } catch (error) {
-    console.error("Error in invitations API:", error);
+    console.error(`[SHARE-EMAIL] Error for workspace ${workspaceId}, email ${email}:`, error);
     return res.status(500).json({ error: "Internal server error" });
   }
 } 
