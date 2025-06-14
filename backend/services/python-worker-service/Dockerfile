@@ -23,10 +23,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Create app directory and copy application code into it from builder
 WORKDIR /app 
-COPY --from=builder /app/worker.py /app/
-COPY --from=builder /app/controllers.py /app/
-COPY --from=builder /app/configs.py /app/
-COPY --from=builder /app/models.py /app/
+COPY --from=builder /app/*.py /app/
 
 # Secure /app: make it read-only for appuser (owner root, group appgroup r-x)
 RUN chown -R root:appgroup /app && \
