@@ -4,10 +4,10 @@ import {
   useState,
   useRef,
   useCallback,
+  useEffect,
 } from "react";
-import { executeCodeAuth, executeCode } from "@/lib/api";
 import { WorkspaceConflictError } from "@/types/errors";
-import type { ExecuteRequestBody, ClientFileState } from "@/types/api";
+import type { ClientFileState } from "@/types/api";
 import { useAuth } from "@clerk/react-router";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { auth } from "@/lib/firebase";
@@ -15,6 +15,7 @@ import { toast } from "@/components/ui/sonner";
 import debounce from "lodash/debounce";
 import { getLanguageForExecution } from "@/lib/execution";
 import { useJobStatus } from "@/hooks/useJobStatus";
+import { useExecuteCode } from "@/hooks/useExecuteCode";
 import type {
   CodeExecutionContextType,
   CodeExecutionProviderProps,
@@ -46,6 +47,16 @@ export const CodeExecutionProvider = ({
   const [activeFileForExecution, setActiveFileForExecution] =
     useState<string>("main.py");
 
+  // State for triggering execution
+  const [executionTrigger, setExecutionTrigger] = useState<{
+    timestamp: number;
+    authToken?: string;
+    language: string;
+    code: string;
+    input: string;
+    filesInEditor?: ClientFileState[];
+  } | null>(null);
+
   const { isSignedIn } = useAuth();
   const {
     selectedWorkspace,
@@ -57,193 +68,132 @@ export const CodeExecutionProvider = ({
     refreshManifestOnly,
   } = useWorkspace();
 
+  // Prepare execution parameters
+  const executionParams = executionTrigger
+    ? isSignedIn && selectedWorkspace && executionTrigger.authToken && executionTrigger.filesInEditor
+      ? {
+          type: 'authenticated' as const,
+          workspaceId: selectedWorkspace.workspaceId,
+          authToken: executionTrigger.authToken,
+          filesInEditor: executionTrigger.filesInEditor,
+          executionDetails: {
+            language: executionTrigger.language,
+            entrypointFile: activeFileForExecution,
+            input: executionTrigger.input,
+          },
+          currentLocalManifestItems: currentWorkspaceManifest || [],
+          currentLocalWorkspaceVersion: currentWorkspaceVersion?.toString() ?? "0",
+          enabled: true,
+        }
+      : {
+          type: 'unauthenticated' as const,
+          executionDetails: {
+            language: executionTrigger.language,
+            code: executionTrigger.code,
+            input: executionTrigger.input,
+          },
+          enabled: true,
+        }
+    : null;
+
+  // Use the execution hook
+  const { data: executionResult, error: executionError, isFetching } = useExecuteCode(
+    executionParams || {
+      type: 'unauthenticated',
+      executionDetails: { language: '', code: '', input: '' },
+      enabled: false,
+    }
+  );
+
   const handleJobCompletionOrFailure = useCallback(
     (finalMessage: string) => {
       setIsExecuting(false);
       setConsoleOutput((prev) => [...prev, ...finalMessage.split("\n")]);
       setCurrentJobId(null);
+      setExecutionTrigger(null); // Reset trigger
     },
     [setIsExecuting, setConsoleOutput],
   );
 
   useJobStatus(currentJobId, handleJobCompletionOrFailure);
 
-  const executeAuthenticated = useCallback(
-    async (
-      language: ExecuteRequestBody["language"],
-      code: string,
-      input: string,
-      isRetry: boolean = false
-    ) => {
-      // Prevent concurrent executions that could cause version conflicts
-      if (isExecuting) {
-        console.warn('⚠️  Execution already in progress, skipping...');
-        return;
-      }
-      
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        if (!token) {
-          throw new Error(
-            "Authentication token not available for signed-in user.",
-          );
-        }
-
-        if (!selectedWorkspace) {
-          throw new Error("No workspace selected for authenticated execution.");
-        }
-
-        const filesInEditorForSync: ClientFileState[] = [];
-        const workspaceCache = fileContentCache[selectedWorkspace.workspaceId];
-
-        if (workspaceCache) {
-          for (const [filePath, fileContent] of Object.entries(
-            workspaceCache,
-          )) {
-            filesInEditorForSync.push({
-              filePath,
-              content: fileContent,
-              type: fileContent === null ? "folder" : "file",
-            });
+  // Handle execution results
+  useEffect(() => {
+    if (executionResult && executionTrigger) {
+      if ('finalWorkspaceVersion' in executionResult && executionResult.finalWorkspaceVersion) {
+        setWorkspaceVersion(executionResult.finalWorkspaceVersion);
+        // Only refresh manifest if the workspace version actually changed
+        if (executionResult.finalWorkspaceVersion !== currentWorkspaceVersion?.toString()) {
+          if (selectedWorkspace) {
+            refreshManifestOnly(selectedWorkspace);
           }
         }
+      }
 
-        const activeFileIndex = filesInEditorForSync.findIndex(
-          (f) => f.filePath === activeFileForExecution,
+      if (executionResult.job_id) {
+        toast.success(
+          `Execution started successfully at entrypoint: ${activeFileForExecution}, job_id: ${executionResult.job_id}`,
         );
-        if (activeFileIndex !== -1) {
-          filesInEditorForSync[activeFileIndex].content = code;
+        setCurrentJobId(executionResult.job_id);
+      } else {
+        handleJobCompletionOrFailure("Error: Failed to start execution.");
+      }
+    }
+  }, [executionResult, executionTrigger, setWorkspaceVersion, currentWorkspaceVersion, selectedWorkspace, refreshManifestOnly, activeFileForExecution, handleJobCompletionOrFailure]);
+
+  // Handle execution errors
+  useEffect(() => {
+    if (executionError && executionTrigger) {
+      let errorMessage = "An unknown error occurred during execution.";
+      
+      if (executionError instanceof WorkspaceConflictError) {
+        // Automatically recover from version conflicts
+        if (executionError.newVersion) {
+          setWorkspaceVersion(executionError.newVersion);
+          toast.info("Workspace version updated, please try again.");
         } else {
-          filesInEditorForSync.push({
-            filePath: activeFileForExecution,
-            content: code,
-            type: "file",
+          toast.error("Workspace is out of sync", {
+            description:
+              "A newer version is available. Refreshing will discard your local changes.",
+            action: {
+              label: "Refresh Now",
+              onClick: () => {
+                if (selectedWorkspace) {
+                  refreshWorkspace(selectedWorkspace);
+                }
+              },
+            },
+            duration: Infinity,
           });
         }
-
-        if (filesInEditorForSync.length === 0) {
-          toast.error("No files to sync or execute for the workspace.");
-          handleJobCompletionOrFailure(
-            "Error: No files available for authenticated execution.",
-          );
-          return;
-        }
-
-        const response = await executeCodeAuth(
-          selectedWorkspace.workspaceId,
-          token,
-          filesInEditorForSync,
-          {
-            language,
-            entrypointFile: activeFileForExecution,
-            input,
-          },
-          currentWorkspaceManifest || [],
-          currentWorkspaceVersion?.toString() ?? "0",
-        );
-
-        if (response.finalWorkspaceVersion) {
-          setWorkspaceVersion(response.finalWorkspaceVersion);
-          // Only refresh manifest if the workspace version actually changed
-          // This reduces unnecessary API calls to the backend
-          if (response.finalWorkspaceVersion !== currentWorkspaceVersion?.toString()) {
-            await refreshManifestOnly(selectedWorkspace);
-          }
-        }
-
-        if (!response.job_id) {
-          handleJobCompletionOrFailure("Error: Failed to start execution.");
-          return;
-        }
-
-        toast.success(
-          `Execution started successfully at entrypoint: ${activeFileForExecution}, job_id: ${response.job_id}`,
-        );
-        setCurrentJobId(response.job_id);
-      } catch (err) {
-        let errorMessage =
-          "An unknown error occurred during authenticated execution.";
-        if (err instanceof WorkspaceConflictError) {
-          // Automatically recover from version conflicts
-          if (err.newVersion && !isRetry) {
-            setWorkspaceVersion(err.newVersion);
-            toast.info("Workspace version updated, retrying...");
-            // Retry once with the updated version, with longer delay to ensure state propagation
-            setTimeout(() => executeAuthenticated(language, code, input, true), 500);
-            return;
-          } else {
-            toast.error("Workspace is out of sync", {
-              description:
-                "A newer version is available. Refreshing will discard your local changes.",
-              action: {
-                label: "Refresh Now",
-                onClick: () =>
-                  selectedWorkspace && refreshWorkspace(selectedWorkspace),
-              },
-              duration: Infinity,
-            });
-            errorMessage = `Execution failed: Workspace conflict could not be resolved automatically.`;
-          }
-        } else if (err instanceof Error) {
-          errorMessage = `API call to /execute-auth failed: ${err.message}`;
-          console.error(errorMessage, err);
-          toast.error(err.message);
-        }
-        handleJobCompletionOrFailure(`Error: ${errorMessage}`);
+        errorMessage = `Execution failed: Workspace conflict could not be resolved automatically.`;
+      } else {
+        errorMessage = `Execution failed: ${executionError.message}`;
+        console.error(errorMessage, executionError);
+        toast.error(executionError.message);
       }
-    },
-    [
-      activeFileForExecution,
-      currentWorkspaceManifest,
-      currentWorkspaceVersion,
-      fileContentCache,
-      handleJobCompletionOrFailure,
-      refreshWorkspace,
-      selectedWorkspace,
-      setWorkspaceVersion,
-      refreshManifestOnly,
-      isExecuting,
-    ],
-  );
+      
+      handleJobCompletionOrFailure(`Error: ${errorMessage}`);
+    }
+  }, [executionError, executionTrigger, setWorkspaceVersion, selectedWorkspace, refreshWorkspace, handleJobCompletionOrFailure]);
 
-  const executeAnonymous = useCallback(
-    async (
-      language: ExecuteRequestBody["language"],
-      code: string,
-      input: string,
-    ) => {
-      try {
-        const response = await executeCode({
-          language,
-          code,
-          input,
-        });
-
-        if (response.error || !response.job_id) {
-          handleJobCompletionOrFailure(
-            `Error: ${response.error || "Failed to start execution."}`,
-          );
-          return;
-        }
-        setCurrentJobId(response.job_id);
-        toast.success(
-          `Execution started successfully at entrypoint: ${activeFileForExecution}, job_id: ${response.job_id}`,
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "An unknown error occurred";
-        console.error("API call to /execute failed:", error);
-        toast.error(`Anonymous execution failed: ${errorMessage}`);
-        handleJobCompletionOrFailure(`Error: ${errorMessage}`);
-      }
-    },
-    [activeFileForExecution, handleJobCompletionOrFailure],
-  );
+  // Update executing state based on fetching status
+  useEffect(() => {
+    if (executionTrigger) {
+      setIsExecuting(isFetching);
+    }
+  }, [isFetching, executionTrigger]);
 
   const execute = useCallback(async (): Promise<void> => {
     if (!editorRef.current) {
       toast.error("Editor not available.");
       setConsoleOutput((prev) => [...prev, "Error: Editor not available."]);
+      return;
+    }
+
+    // Prevent concurrent executions
+    if (isExecuting) {
+      console.warn('⚠️  Execution already in progress, skipping...');
       return;
     }
 
@@ -257,21 +207,76 @@ export const CodeExecutionProvider = ({
       return;
     }
 
-    setIsExecuting(true);
     setConsoleOutput((prev) => [...prev, "Executing code..."]);
 
-    if (isSignedIn && selectedWorkspace) {
-      await executeAuthenticated(language, code, consoleInputValue);
-    } else {
-      await executeAnonymous(language, code, consoleInputValue);
+    try {
+      // Prepare execution data
+      const timestamp = Date.now();
+      let authToken: string | undefined;
+      let filesInEditor: ClientFileState[] | undefined;
+
+      if (isSignedIn && selectedWorkspace) {
+        authToken = await auth.currentUser?.getIdToken();
+        if (!authToken) {
+          throw new Error("Authentication token not available for signed-in user.");
+        }
+
+        filesInEditor = [];
+        const workspaceCache = fileContentCache[selectedWorkspace.workspaceId];
+
+        if (workspaceCache) {
+          for (const [filePath, fileContent] of Object.entries(workspaceCache)) {
+            filesInEditor.push({
+              filePath,
+              content: fileContent,
+              type: fileContent === null ? "folder" : "file",
+            });
+          }
+        }
+
+        const activeFileIndex = filesInEditor.findIndex(
+          (f) => f.filePath === activeFileForExecution,
+        );
+        if (activeFileIndex !== -1) {
+          filesInEditor[activeFileIndex].content = code;
+        } else {
+          filesInEditor.push({
+            filePath: activeFileForExecution,
+            content: code,
+            type: "file",
+          });
+        }
+
+        if (filesInEditor.length === 0) {
+          toast.error("No files to sync or execute for the workspace.");
+          setConsoleOutput((prev) => [...prev, "Error: No files available for authenticated execution."]);
+          return;
+        }
+      }
+
+      // Trigger execution
+      setExecutionTrigger({
+        timestamp,
+        authToken,
+        language,
+        code,
+        input: consoleInputValue,
+        filesInEditor,
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      console.error("Error preparing execution:", error);
+      toast.error(`Execution failed: ${errorMessage}`);
+      setConsoleOutput((prev) => [...prev, `Error: ${errorMessage}`]);
     }
   }, [
     activeFileForExecution,
     consoleInputValue,
     isSignedIn,
     selectedWorkspace,
-    executeAuthenticated,
-    executeAnonymous,
+    fileContentCache,
+    isExecuting,
   ]);
 
   const debouncedExecute = debounce(execute, 1000);

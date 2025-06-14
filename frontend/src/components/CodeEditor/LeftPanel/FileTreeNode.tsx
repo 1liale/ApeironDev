@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { NodeModel } from "@minoru/react-dnd-treeview";
 import { FileSystemNodeData } from "@/types/filesystem"; // Corrected import name
-import { cn } from '@/lib/utils';
+import { cn } from '@/utils/utils';
 
 interface FileTreeNodeProps {
   node: NodeModel<FileSystemNodeData>;

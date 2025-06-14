@@ -18,7 +18,7 @@ import {
 } from "@/lib/filesystem";
 import { useAuth } from "@clerk/react-router";
 import { toast } from "@/components/ui/sonner";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/utils";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { v4 as uuidv4 } from "uuid";
 
