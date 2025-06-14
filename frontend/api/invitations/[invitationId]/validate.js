@@ -2,7 +2,7 @@ import { verifyToken } from "@clerk/backend";
 import {
   db,
   clerkClient,
-} from "../../_lib/workspaceService";
+} from "../../_lib/workspaceService.js";
 
 // Helper function to validate invitation
 async function validateInvitation(invitationId) {

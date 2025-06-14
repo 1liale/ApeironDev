@@ -5,7 +5,7 @@ import {
   clerkClient,
   checkWorkspaceOwnerPermission,
   getInviterInfo,
-} from "../../_lib/workspaceService";
+} from "../../_lib/workspaceService.js";
 
 // Helper function to create invitation in Firestore
 async function createInvitation(workspaceId, inviteeEmail, role, inviterId, inviterInfo) {
