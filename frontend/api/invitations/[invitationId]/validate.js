@@ -1,13 +1,14 @@
 import { verifyToken } from "@clerk/backend";
 import {
-  db,
-  clerkClient,
+  getDb,
+  getClerkClient,
 } from "../../_lib/workspaceService.js";
+import { v4 as uuidv4 } from "uuid";
 
 // Helper function to validate invitation
 async function validateInvitation(invitationId) {
   console.log(`[VALIDATE] Checking invitation ${invitationId}`);
-  
+  const db = getDb();
   const invitationDoc = await db
     .collection("workspace_invitations")
     .doc(invitationId)
@@ -33,18 +34,12 @@ async function validateInvitation(invitationId) {
     throw new Error("Invitation has already been processed");
   }
 
-  // For link invitations, they should be active
-  if (invitation.invitation_type === "link" && invitation.status !== "active") {
-    console.log(`[VALIDATE] Link invitation ${invitationId} is not active (status: ${invitation.status})`);
-    throw new Error("Invitation link is not active");
-  }
-
-  console.log(`[VALIDATE] Invitation ${invitationId} is valid (type: ${invitation.invitation_type}, role: ${invitation.invitee_role})`);
   return invitation;
 }
 
 // Helper function to check if user is already a member
 async function checkExistingMembership(userId, workspaceId) {
+  const db = getDb();
   const membershipQuery = await db
     .collection("workspace_memberships")
     .where("user_id", "==", userId)
@@ -56,52 +51,60 @@ async function checkExistingMembership(userId, workspaceId) {
 }
 
 // Helper function to create workspace membership
-async function createWorkspaceMembership(userId, workspaceId, role, invitationId) {
+async function createWorkspaceMembership(userId, workspaceId, role, userInfo) {
+  const db = getDb();
   console.log(`[VALIDATE] Creating membership for user ${userId} in workspace ${workspaceId} with role ${role}`);
   
+  const membershipId = uuidv4();
   const membership = {
+    membership_id: membershipId,
     user_id: userId,
+    user_email: userInfo.emailAddresses?.[0]?.emailAddress || "",
+    user_name: `${userInfo.firstName || ""} ${userInfo.lastName || ""}`.trim() || userInfo.emailAddresses?.[0]?.emailAddress || "",
     workspace_id: workspaceId,
     role: role,
     joined_at: new Date().toISOString(),
-    invited_by_invitation_id: invitationId,
   };
 
   await db
     .collection("workspace_memberships")
-    .add(membership);
+    .doc(membershipId)
+    .set(membership);
 
   console.log(`[VALIDATE] Created membership for user ${userId} in workspace ${workspaceId}`);
   return membership;
 }
 
-// Helper function to update invitation status
-async function updateInvitationStatus(invitationId, invitationType, userId = null) {
-  const updates = {};
+// Helper function to handle invitation after acceptance
+async function handleInvitationAfterAcceptance(invitationId, invitationType, userEmail, workspaceId) {
+  const db = getDb();
   
-  if (invitationType === "email") {
-    // Email invitations become "accepted" and are consumed
-    updates.status = "accepted";
-    updates.accepted_at = new Date().toISOString();
-    updates.accepted_by_user_id = userId;
-  } else if (invitationType === "link") {
-    // Link invitations increment usage count but stay active
-    const invitationDoc = await db.collection("workspace_invitations").doc(invitationId).get();
-    const currentUsageCount = invitationDoc.data()?.usage_count || 0;
-    updates.usage_count = currentUsageCount + 1;
-    updates.last_used_at = new Date().toISOString();
-    updates.last_used_by_user_id = userId;
+    if (invitationType === "email") {
+    // Delete the accepted email invitation
+    await db.collection("workspace_invitations").doc(invitationId).delete();
+    console.log(`[VALIDATE] Deleted email invitation ${invitationId} after acceptance`);
   }
 
-  await db
+  // Clean up any other pending email invitations for this user in this workspace
+  const pendingInvitationsQuery = await db
     .collection("workspace_invitations")
-    .doc(invitationId)
-    .update(updates);
+    .where("workspace_id", "==", workspaceId)
+    .where("invitee_email", "==", userEmail)
+    .where("invitation_type", "==", "email")
+    .where("status", "==", "pending")
+    .get();
 
-  console.log(`[VALIDATE] Updated invitation ${invitationId} status for ${invitationType} type`);
+  if (!pendingInvitationsQuery.empty) {
+    const batch = db.batch();
+    pendingInvitationsQuery.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+    console.log(`[VALIDATE] Cleaned up ${pendingInvitationsQuery.docs.length} pending email invitation(s) for ${userEmail} in workspace ${workspaceId}`);
+  }
 }
 
-export default async function handler(req, res) {
+export default async function handler(req, res) {  
   console.log(`[VALIDATE] ${req.method} request for invitation validation`);
   
   if (req.method !== 'POST') {
@@ -111,17 +114,12 @@ export default async function handler(req, res) {
   const { invitationId } = req.query;
   const token = req.headers.authorization?.replace("Bearer ", "");
 
-  console.log(`[VALIDATE] Processing invitation ${invitationId}`);
-
-  if (!token) {
-    return res.status(401).json({ error: "Authentication token required" });
-  }
-
-  if (!invitationId) {
-    return res.status(400).json({ error: "Invitation ID is required" });
-  }
-
+  if (!token) return res.status(401).json({ error: "Authentication token required" });
+  if (!invitationId) return res.status(400).json({ error: "Invitation ID is required" });
+  
   try {
+    const clerkClient = getClerkClient();
+    
     // Verify the user's token
     const verifiedToken = await verifyToken(token, { 
       secretKey: process.env.CLERK_SECRET_KEY 
@@ -133,6 +131,9 @@ export default async function handler(req, res) {
 
     const userId = verifiedToken.sub;
     console.log(`[VALIDATE] User ${userId} validating invitation ${invitationId}`);
+
+    // Get user info for membership creation
+    const userInfo = await clerkClient.users.getUser(userId);
 
     // Validate the invitation
     const invitation = await validateInvitation(invitationId);
@@ -150,11 +151,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // For email invitations, validate the email matches (if specified)
+    // For email invitations, validate the email matches
     if (invitation.invitation_type === "email" && invitation.invitee_email) {
-      const userInfo = await clerkClient.users.getUser(userId);
       const userEmail = userInfo.emailAddresses?.[0]?.emailAddress;
-      
       if (userEmail !== invitation.invitee_email) {
         console.log(`[VALIDATE] Email mismatch: expected ${invitation.invitee_email}, got ${userEmail}`);
         return res.status(403).json({ 
@@ -168,11 +167,12 @@ export default async function handler(req, res) {
       userId, 
       invitation.workspace_id, 
       invitation.invitee_role, 
-      invitationId
+      userInfo
     );
 
-    // Update invitation status
-    await updateInvitationStatus(invitationId, invitation.invitation_type, userId);
+    // Handle invitation after acceptance (delete email invites, increment usage for links, cleanup other pending invites)
+    const userEmail = userInfo.emailAddresses?.[0]?.emailAddress;
+    await handleInvitationAfterAcceptance(invitationId, invitation.invitation_type, userEmail, invitation.workspace_id);
 
     console.log(`[VALIDATE] Successfully processed invitation ${invitationId} for user ${userId}`);
 
@@ -192,7 +192,7 @@ export default async function handler(req, res) {
     const statusCode = 
       errorMessage.includes("not found") ? 404 :
       errorMessage.includes("expired") ? 410 :
-      errorMessage.includes("already been processed") ? 409 :
+      errorMessage.includes("already been used") ? 409 :
       errorMessage.includes("different email") ? 403 :
       500;
 

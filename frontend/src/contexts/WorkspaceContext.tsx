@@ -37,10 +37,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
 }) => {
   const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
-  const { workspaceId: workspaceIdFromUrl } = useParams<{ 
-    workspaceId: string;
-  }>();
-  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummaryItem[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] =
     useState<WorkspaceSummaryItem | null>(null);
@@ -205,24 +201,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
       resetWorkspaceState();
     }
   }, [isSignedIn, userId, fetchWorkspaces, resetWorkspaceState]);
-
-  // Effect to handle workspace selection from URL
-  useEffect(() => {
-    if (workspaceIdFromUrl && workspaces.length > 0) {
-      const workspaceFromUrl = workspaces.find(
-        (ws) => ws.workspaceId === workspaceIdFromUrl
-      );
-      if (workspaceFromUrl) {
-        if (selectedWorkspace?.workspaceId !== workspaceFromUrl.workspaceId) {
-          setSelectedWorkspace(workspaceFromUrl);
-        }
-      } else {
-        // Handle case where workspace ID in URL is invalid or not found
-        toast.error("Workspace not found.");
-        navigate("/");
-      }
-    }
-  }, [workspaceIdFromUrl, workspaces, selectedWorkspace, navigate]);
 
   const refreshWorkspace = useCallback(
     async (workspaceToRefresh: WorkspaceSummaryItem) => {

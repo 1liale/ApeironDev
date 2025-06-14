@@ -85,8 +85,8 @@ const InvitationPage = () => {
 
       // Redirect to workspace
       setTimeout(() => {
-        navigate(`/workspaces/${data.workspaceId}`);
-      }, 1500);
+        navigate(`/`);
+      }, 2000);
 
     } catch (error) {
       const e = error as Error;

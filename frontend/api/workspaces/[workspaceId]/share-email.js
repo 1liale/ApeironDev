@@ -1,14 +1,15 @@
 import { verifyToken } from "@clerk/backend";
 import { v4 as uuidv4 } from "uuid";
 import {
-  db,
-  clerkClient,
+  getDb,
+  getClerkClient,
   checkWorkspaceOwnerPermission,
   getInviterInfo,
 } from "../../_lib/workspaceService.js";
 
 // Helper function to create invitation in Firestore
 async function createInvitation(workspaceId, inviteeEmail, role, inviterId, inviterInfo) {
+  const db = getDb();
   const invitationId = uuidv4();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -37,6 +38,7 @@ async function createInvitation(workspaceId, inviteeEmail, role, inviterId, invi
 // Helper function to check for existing pending invitation
 async function hasExistingInvitation(workspaceId, email) {
   try {
+    const db = getDb();
     const existingQuery = await db
       .collection("workspace_invitations")
       .where("workspace_id", "==", workspaceId)
@@ -127,6 +129,7 @@ export default async function handler(req, res) {
     
     console.log(`[SHARE-EMAIL] Sending Clerk invitation to ${email} with redirect: ${redirectUrl}`);
     
+    const clerkClient = getClerkClient();
     const clerkInvitation = await clerkClient.invitations.createInvitation({
       emailAddress: email,
       redirectUrl: redirectUrl,
@@ -139,6 +142,7 @@ export default async function handler(req, res) {
     });
 
     // Update our invitation with Clerk's invitation ID
+    const db = getDb();
     await db
       .collection("workspace_invitations")
       .doc(invitation.invitation_id)
