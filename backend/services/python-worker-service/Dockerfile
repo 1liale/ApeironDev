@@ -9,10 +9,7 @@ RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Copy all necessary Python files for the application
-COPY worker.py . 
-COPY controllers.py . 
-COPY configs.py . 
-COPY models.py . 
+COPY *.py .
 
 # Stage 2: Final build
 FROM python:3.11-slim
