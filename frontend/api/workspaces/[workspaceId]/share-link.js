@@ -4,7 +4,7 @@ import {
   db,
   checkWorkspaceOwnerPermission,
   getInviterInfo,
-} from "../../_lib/workspaceService";
+} from "../../_lib/workspaceService.js";
 
 async function getOrCreateShareableInvite(workspaceId, role, inviterId, inviterInfo) {
   // For shareable links, we look for active (not pending) invitations that haven't expired
