@@ -1,12 +1,14 @@
 import { verifyToken } from "@clerk/backend";
 import { v4 as uuidv4 } from "uuid";
 import {
-  db,
+  getDb,
   checkWorkspaceOwnerPermission,
   getInviterInfo,
 } from "../../_lib/workspaceService.js";
 
 async function getOrCreateShareableInvite(workspaceId, role, inviterId, inviterInfo) {
+  const db = getDb();
+  
   // For shareable links, we look for active (not pending) invitations that haven't expired
   const existingQuery = await db
     .collection("workspace_invitations")
@@ -20,16 +22,15 @@ async function getOrCreateShareableInvite(workspaceId, role, inviterId, inviterI
   for (const doc of existingQuery.docs) {
     const invitation = doc.data();
     if (new Date(invitation.expires_at) > new Date()) {
-      return invitation; // Return existing valid link
+      return invitation;
     } else {
-      // Clean up expired link
       await db.collection("workspace_invitations").doc(doc.id).delete();
     }
   }
 
   const invitationId = uuidv4();
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 1 day
 
   const newInvitation = {
     invitation_id: invitationId,
@@ -42,8 +43,7 @@ async function getOrCreateShareableInvite(workspaceId, role, inviterId, inviterI
     status: "active", // Shareable links are "active", not "pending"
     created_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
-    invitation_type: "link",
-    usage_count: 0, // Track how many times this link has been used
+    invitation_type: "shareable_link",
   };
 
   await db.collection("workspace_invitations").doc(invitationId).set(newInvitation);
@@ -51,6 +51,7 @@ async function getOrCreateShareableInvite(workspaceId, role, inviterId, inviterI
 }
 
 export default async function handler(req, res) {
+  console.log('✅ /api/workspaces/[workspaceId]/share-link function was called!');
   console.log(`[SHARE-LINK] ${req.method} request received`);
   
   if (req.method !== 'POST') {

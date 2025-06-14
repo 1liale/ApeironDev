@@ -16,11 +16,10 @@ const App = () => {
   useEffect(() => {
     const onboardingShownKey = "onboardingModalShownThisSession";
     const hasOnboardingBeenShown = sessionStorage.getItem(onboardingShownKey);
-    const isInvitationRoute = location.pathname.startsWith("/invitation/");
+    const isInvitationRoute = location.pathname.startsWith("/invitations/");
 
     const definedRoutes = [
       "/",
-      /^\/workspaces\/[^/]+$/,
       /^\/invitations\/[^/]+$/,
     ];
     const isDefinedRoute = definedRoutes.some((route) =>
@@ -48,7 +47,6 @@ const App = () => {
       <FirebaseAuthProvider>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/workspaces/:workspaceId" element={<HomePage />} />
           <Route path="/invitations/:invitationId" element={<InvitationPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
