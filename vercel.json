@@ -1,15 +1,15 @@
 {
-  "buildCommand": "cd frontend && npm run build",
-  "outputDirectory": "frontend/dist",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "functions": {
-    "frontend/api/**/*.js": {
+    "api/**/*.js": {
       "runtime": "@vercel/node@3"
     }
   },
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/frontend/api/$1"
+      "dest": "/api/$1"
     },
     {
       "handle": "filesystem"
