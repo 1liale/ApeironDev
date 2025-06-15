@@ -6,8 +6,6 @@ resource "google_service_account" "cicd_runner" {
   display_name = "Cloud Build Runner Service Account"
 }
 
-# IAM roles for the CI/CD Service Account
-
 # Allows the SA to manage Artifact Registry repositories
 resource "google_project_iam_member" "cicd_artifact_registry_admin" {
   provider = google
@@ -44,7 +42,7 @@ resource "google_project_iam_member" "cicd_service_account_user" {
 resource "google_project_iam_member" "cicd_secret_manager_admin" { # Renamed for clarity
   provider = google
   project  = var.gcp_project_id
-  role     = "roles/secretmanager.admin" # Changed from secretAccessor to admin
+  role     = "roles/secretmanager.admin"
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
 }
 
@@ -101,21 +99,6 @@ resource "google_project_iam_member" "cicd_firestore_index_admin" {
   project  = var.gcp_project_id
   role     = "roles/datastore.indexAdmin"
   member   = "serviceAccount:${google_service_account.cicd_runner.email}"
-}
-
-variable "github_owner" {
-  description = "The owner of the GitHub repository (username or organization)."
-  type        = string
-}
-
-variable "github_repo_name" {
-  description = "The name of the GitHub repository."
-  type        = string
-}
-
-variable "github_app_installation_id" {
-  description = "The installation ID of the Google Cloud Build GitHub App for the repository."
-  type        = string
 }
 
 # Grant the default Cloud Build Service Agent access to the PAT secret
@@ -206,114 +189,52 @@ resource "google_cloudbuild_trigger" "python_worker_build_deploy" {
   }
 }
 
-# --- Google Secret Manager Secrets ---
-# These secrets will be created by Terraform. Their values need to be populated manually
-# or via a secure mechanism after creation.
+# Cloud Build Trigger for rag-query-service build and deploy
+resource "google_cloudbuild_trigger" "rag_query_build_deploy" {
+  project     = var.gcp_project_id
+  name        = "rag-query-build-deploy-trigger"
+  description = "Triggers build and deploy for rag-query-service on changes to its directory"
+  location    = "global"
 
-resource "google_secret_manager_secret" "r2_access_key_id" {
-  provider = google
-  project   = var.gcp_project_id
-  secret_id = "r2-access-key-id"
+  github {
+    owner = var.github_owner
+    name  = var.github_repo_name
+    pull_request {
+      branch = "^main$"
+    }
+  }
 
-  replication {
-    auto {}
+  included_files  = ["backend/services/rag-query-service/**"]
+  filename        = "backend/services/rag-query-service/cloudbuild.yaml"
+  service_account = "projects/${var.gcp_project_id}/serviceAccounts/${google_service_account.cicd_runner.email}"
+
+  substitutions = {
+    _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
+    _GCP_REGION                = var.gcp_region
   }
 }
 
-resource "google_secret_manager_secret" "r2_secret_access_key" {
-  provider = google
-  project   = var.gcp_project_id
-  secret_id = "r2-secret-access-key"
+# Cloud Build Trigger for rag-indexing-service build and deploy
+resource "google_cloudbuild_trigger" "rag_indexing_service_build_deploy" {
+  project     = var.gcp_project_id
+  name        = "rag-indexing-build-deploy-trigger"
+  description = "Triggers build and deploy for rag-indexing-service on changes to its directory"
+  location    = "global"
 
-  replication {
-    auto {}
+  github {
+    owner = var.github_owner
+    name  = var.github_repo_name
+    pull_request {
+      branch = "^main$"
+    }
+  }
+
+  included_files  = ["backend/services/rag-indexing-service/**"]
+  filename        = "backend/services/rag-indexing-service/cloudbuild.yaml"
+  service_account = "projects/${var.gcp_project_id}/serviceAccounts/${google_service_account.cicd_runner.email}"
+
+  substitutions = {
+    _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
+    _GCP_REGION                = var.gcp_region
   }
 }
-
-resource "google_secret_manager_secret" "r2_account_id" {
-  provider = google
-  project   = var.gcp_project_id
-  secret_id = "r2-account-id"
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "r2_bucket_name" {
-  provider = google
-  project   = var.gcp_project_id
-  secret_id = "r2-bucket-name"
-
-  replication {
-    auto {}
-  }
-}
-
-# --- IAM Permissions for Service Accounts to Access Secrets (Verbose but necessary to provide granular access control) ---
-
-# Permissions for api-service-sa
-resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_access_key_id" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_access_key_id.project
-  secret_id = google_secret_manager_secret.r2_access_key_id.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api_service_sa.email}" # Defined in cloud_tasks.tf or api_service.tf
-}
-
-resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_secret_access_key" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_secret_access_key.project
-  secret_id = google_secret_manager_secret.r2_secret_access_key.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_account_id" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_account_id.project
-  secret_id = google_secret_manager_secret.r2_account_id.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "api_service_sa_can_access_r2_bucket_name" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_bucket_name.project
-  secret_id = google_secret_manager_secret.r2_bucket_name.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api_service_sa.email}"
-}
-
-# Permissions for code-exec-worker-sa
-resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_access_key_id" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_access_key_id.project
-  secret_id = google_secret_manager_secret.r2_access_key_id.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}" # Defined in cloud_tasks.tf or python_worker_service.tf
-}
-
-resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_secret_access_key" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_secret_access_key.project
-  secret_id = google_secret_manager_secret.r2_secret_access_key.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_account_id" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_account_id.project
-  secret_id = google_secret_manager_secret.r2_account_id.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "code_exec_worker_sa_can_access_r2_bucket_name" {
-  provider  = google
-  project   = google_secret_manager_secret.r2_bucket_name.project
-  secret_id = google_secret_manager_secret.r2_bucket_name.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.code_execution_worker_sa.email}"
-} 

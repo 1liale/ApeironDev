@@ -2,11 +2,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4.20"
-    }
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 5"
     }
   }
 }
@@ -14,18 +10,6 @@ terraform {
 # Provider for Cloudflare (managing the bucket itself)
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
-}
-
-# Provider for AWS S3 (managing R2 bucket policies like CORS)
-# This is the standard way to manage R2 policies via Terraform.
-provider "aws" {
-  access_key = var.r2_access_key_id
-  secret_key = var.r2_secret_access_key
-  region     = "us-east-1" # Must be a valid AWS region, "us-east-1" is a common placeholder.
-
-  endpoints {
-    s3 = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
-  }
 }
 
 variable "cloudflare_api_token" {
@@ -61,22 +45,24 @@ variable "r2_bucket_name" {
 resource "cloudflare_r2_bucket" "ide_storage_bucket" {
   account_id = var.cloudflare_account_id
   name       = var.r2_bucket_name
-  location   = "ENAM"
+  location   = "enam"
 }
 
-# CORS policy for the R2 bucket, managed via the AWS provider (Manually configured)
-# resource "aws_s3_bucket_cors_configuration" "ide_storage_bucket_cors" {
-#   provider = aws
-#   bucket   = cloudflare_r2_bucket.ide_storage_bucket.name
-
-#   cors_rule {
-#     allowed_headers = ["*"]
-#     allowed_methods = ["PUT", "GET", "DELETE"]
-#     allowed_origins = ["https://www.apeirondev.tech", "http://localhost:8080"]
-#     expose_headers  = []
-#     max_age_seconds = 3000
-#   }
-# }
+resource "cloudflare_r2_bucket_cors" "ide_storage_bucket_cors" {
+  account_id = var.cloudflare_account_id
+  bucket_name = var.r2_bucket_name
+  rules = [{
+    allowed = {
+      methods = ["GET", "PUT", "DELETE", "HEAD"]
+      origins = ["https://www.apeirondev.tech", "http://localhost:8080"]
+      headers = ["*"]
+    }
+    expose_headers = ["*"]
+    max_age_seconds = 3000
+  }]
+  
+  depends_on = [cloudflare_r2_bucket.ide_storage_bucket]
+}
 
 # It can be useful to output the bucket name
 output "r2_bucket_name_output" {

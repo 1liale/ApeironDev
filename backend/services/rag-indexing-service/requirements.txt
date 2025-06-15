@@ -1,0 +1,22 @@
+# Google Cloud Functions framework
+functions-framework
+
+# For connecting to LanceDB on R2
+lancedb
+pyarrow
+
+# For Generative AI embeddings
+langchain-google-genai
+
+# For environment variable and settings management
+pydantic-settings
+pydantic
+
+# For S3/R2 object storage access
+boto3
+
+# For text processing and code chunking
+langchain
+langchain-text-splitters
+tree-sitter
+tree-sitter-python 
