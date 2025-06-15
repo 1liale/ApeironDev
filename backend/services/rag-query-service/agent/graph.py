@@ -4,9 +4,9 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Optional
 
-from ..config import settings
-from .tools import web_search_tool, codebase_search_tool
-from . import prompts
+from config import settings
+from agent.tools import web_search_tool, codebase_search_tool
+from agent import prompts
 
 # --- 1. State Definition ---
 class AgentState(TypedDict):

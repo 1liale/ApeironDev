@@ -6,9 +6,9 @@ from langchain_cohere import CohereRerank
 from langchain_core.documents import Document
 import lancedb
 
-from ..config import settings
-from . import dependencies
-from . import prompts
+from config import settings
+from agent import dependencies
+from agent import prompts
 
 # --- Web Search Tool ---
 # This is a standard tool for performing web searches.
