@@ -23,3 +23,27 @@ services:
     # env_file:
     #   - ./services/python-worker-service/.env 
     restart: always
+
+  rag-query-service:
+    build:
+      context: ./services/rag-query-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080" # Changed to match the service's actual port
+    volumes:
+      - ./services/rag-query-service:/app
+    # env_file:
+    #   - ./services/rag-query-service/.env
+    restart: always
+
+  rag-indexing-service:
+    build:
+      context: ./services/rag-indexing-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8080" # Cloud Run default port
+    volumes:
+      - ./services/rag-indexing-service:/app
+    # env_file:
+    #   - ./services/rag-indexing-service/.env
+    restart: always

@@ -211,7 +211,6 @@ resource "google_cloudbuild_trigger" "rag_query_build_deploy" {
   substitutions = {
     _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
     _GCP_REGION                = var.gcp_region
-    _SERVICE_NAME              = "rag-query-service"
   }
 }
 
@@ -237,6 +236,5 @@ resource "google_cloudbuild_trigger" "rag_indexing_service_build_deploy" {
   substitutions = {
     _ARTIFACT_REGISTRY_REPO_ID = google_artifact_registry_repository.default.repository_id
     _GCP_REGION                = var.gcp_region
-    _SERVICE_NAME              = "rag-indexing-service"
   }
 }
