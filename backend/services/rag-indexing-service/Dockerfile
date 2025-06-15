@@ -1,23 +1,50 @@
-# Use an official Python runtime as a parent image
-FROM python:3.11-slim
+# Stage 1: Builder stage
+FROM python:3.11-slim AS builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Create a non-root user and group
+RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
+
+# Install system dependencies needed for building packages (tree-sitter, etc.)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install dependencies
 COPY requirements.txt .
-
-# Install system dependencies needed for tree-sitter to build its parsers
-RUN apt-get update && apt-get install -y build-essential
-
-# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code into the container at /app
-COPY . .
+# Copy all necessary Python files for the application
+COPY *.py ./
+
+# Stage 2: Final build
+FROM python:3.11-slim
+
+# Create the same non-root user and group as in the builder stage
+RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
+
+# Copy installed packages from builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Create app directory and copy application code from builder
+WORKDIR /app
+COPY --from=builder /app/*.py /app/
+
+# Secure /app: make it read-only for appuser (owner root, group appgroup r-x)
+RUN chown -R root:appgroup /app && \
+    chmod -R 550 /app
+
+USER appuser
+
+# Set environment variables for Python
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages
 
 # Expose the port the app runs on (though it's not strictly necessary for a non-HTTP triggered service, it's good practice)
 EXPOSE 8080
 
 # The Functions Framework will start a server for us
-CMD exec functions-framework --target=index_workspace_handler --port=8080 
+CMD exec functions-framework --target=index_workspace_handler --port=8080
