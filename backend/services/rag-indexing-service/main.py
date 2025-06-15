@@ -7,10 +7,10 @@ import boto3
 import os
 from botocore.client import Config
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_text_splitters import TreeSitterTextSplitter, Language, RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from lancedb.pydantic import LanceModel, Vector
 
-from .config import settings
+from config import settings
 
 # --- Pydantic Models & LanceDB Schema ---
 class FileUpdate(BaseModel):
@@ -115,10 +115,32 @@ def index_workspace_handler(request: Request):
             
             chunks = []
             if file_extension == ".py":
-                # Use tree-sitter for precise, syntax-aware chunking for Python files
-                python_splitter = TreeSitterTextSplitter(language="python", chunk_on=["class_definition", "function_definition"])
+                # Use language-aware splitter for Python files
+                python_splitter = RecursiveCharacterTextSplitter.from_language(
+                    language=Language.PYTHON,
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
                 chunks = python_splitter.split_text(file_content)
-                print(f"  - Split file using tree-sitter (Python) into {len(chunks)} chunks.")
+                print(f"  - Split file using Python-aware splitter into {len(chunks)} chunks.")
+            elif file_extension in [".js", ".jsx", ".ts", ".tsx"]:
+                # Use language-aware splitter for JavaScript/TypeScript files
+                js_splitter = RecursiveCharacterTextSplitter.from_language(
+                    language=Language.JS,
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                chunks = js_splitter.split_text(file_content)
+                print(f"  - Split file using JavaScript-aware splitter into {len(chunks)} chunks.")
+            elif file_extension in [".go"]:
+                # Use language-aware splitter for Go files
+                go_splitter = RecursiveCharacterTextSplitter.from_language(
+                    language=Language.GO,
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                chunks = go_splitter.split_text(file_content)
+                print(f"  - Split file using Go-aware splitter into {len(chunks)} chunks.")
             else:
                 # Use a recursive character splitter as a fallback for other file types
                 chunks = fallback_splitter.split_text(file_content)

@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import List
 
-from .config import settings
-from .agent.graph import agent_graph
-from .agent import dependencies
+from config import settings
+from agent.graph import agent_graph
+from agent import dependencies
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.messages import HumanMessage
+from langgraph.constants import END
 
 # Pydantic model for the query request body
 class QueryRequest(BaseModel):

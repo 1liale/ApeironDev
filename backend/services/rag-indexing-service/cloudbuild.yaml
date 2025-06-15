@@ -3,34 +3,32 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
         'build',
-        '-t', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest',
-        '-t', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}',
+        '-t', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:latest',
+        '-t', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:${SHORT_SHA}',
         '.'
       ]
     dir: 'backend/services/rag-indexing-service'
 
   # Push the image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest']
+    args: ['push', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:latest']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}']
+    args: ['push', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:${SHORT_SHA}']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
-        'run', 'deploy', '${_SERVICE_NAME}',
-        '--image', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest',
+        'run', 'deploy', 'rag-indexing-service',
+        '--image', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:latest',
         '--region', '${_GCP_REGION}',
         '--platform', 'managed',
-        '--no-allow-unauthenticated', # This service should be private
         '--quiet'
       ]
 
 images:
-  - '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
-  - '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}'
+  - 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:latest'
+  - 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-indexing-service:${SHORT_SHA}'
 
 options:
   logging: CLOUD_LOGGING_ONLY
-

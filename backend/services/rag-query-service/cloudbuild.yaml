@@ -3,37 +3,32 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
         'build',
-        '-t', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest',
-        '-t', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}',
+        '-t', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:latest',
+        '-t', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:${SHORT_SHA}',
         '.'
       ]
     dir: 'backend/services/rag-query-service'
 
   # Push the image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest']
+    args: ['push', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:latest']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}']
+    args: ['push', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:${SHORT_SHA}']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
-        'run', 'deploy', '${_SERVICE_NAME}',
-        '--image', '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest',
+        'run', 'deploy', 'rag-query-service',
+        '--image', 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:latest',
         '--region', '${_GCP_REGION}',
         '--platform', 'managed',
         '--quiet'
       ]
 
 images:
-  - '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
-  - '${_GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:${SHORT_SHA}'
+  - 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:latest'
+  - 'us-east1-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO_ID}/rag-query-service:${SHORT_SHA}'
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
-# Substitutions will be provided by the google_cloudbuild_trigger in cicd.tf
-# _GCP_REGION
-# _ARTIFACT_REGISTRY_REPO_ID
-# _SERVICE_NAME 
