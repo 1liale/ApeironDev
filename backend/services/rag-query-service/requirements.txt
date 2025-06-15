@@ -1,0 +1,21 @@
+# Core web framework
+fastapi
+uvicorn[standard]
+
+# For connecting to LanceDB on R2
+lancedb
+pyarrow
+
+# For environment variable and settings management
+pydantic-settings
+pydantic
+
+# For Generative AI and LangChain
+langchain
+langchain-google-genai
+langgraph
+google-cloud-aiplatform
+beautifulsoup4 # For a web search tool
+duckduckgo-search # For a web search tool
+langchain-cohere
+cohere

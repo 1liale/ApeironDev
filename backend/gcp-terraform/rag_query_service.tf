@@ -1,50 +1,46 @@
+# Google Cloud Run service for the RAG Query Service (Python/FastAPI)
 locals {
-  python_worker_service_name = "python-worker-service"
+  rag_query_service_name = "rag-query-service"
 }
 
-variable "python_execution_timeout" {
-  description = "Default execution timeout in seconds for Python worker"
-  type        = string # Cloud Run env vars are strings
-  default     = "60"
-}
-
-# Google Cloud Run service for the Python worker
-resource "google_cloud_run_service" "python_worker" {
-  provider = google
+resource "google_cloud_run_service" "rag_query_service" {
   project  = var.gcp_project_id
-  name     = local.python_worker_service_name
+  name     = local.rag_query_service_name
   location = var.gcp_region
 
   template {
     spec {
-      service_account_name = google_service_account.code_execution_worker_sa.email
+      service_account_name = google_service_account.rag_query_sa.email
       containers {
-        image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.default.repository_id}/${local.python_worker_service_name}:latest"
+        image = "us-east1-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.default.repository_id}/${local.rag_query_service_name}:latest"
         ports {
           container_port = 8080
         }
         resources {
           limits = {
             memory = "512Mi"
-            cpu    = "1000m" # 1 CPU core
+            cpu    = "1000m"
           }
         }
+
         env {
           name  = "GCP_PROJECT_ID"
           value = var.gcp_project_id
         }
         env {
-          name  = "COLLECTION_ID_JOBS"
-          value = var.firestore_jobs_collection
-        }
-        env {
-          name  = "DEFAULT_EXECUTION_TIMEOUT_SEC"
-          value = var.python_execution_timeout
+          name  = "GCP_REGION"
+          value = var.gcp_region
         }
         env {
           name  = "LOG_LEVEL"
-          value = "INFO"
+          value = "info"
         }
+        env {
+          name  = "LANCEDB_TABLE_NAME"
+          value = var.lancedb_table_name
+        }
+
+        # Mount secrets as environment variables
         env {
           name = "R2_ACCESS_KEY_ID"
           value_from {
@@ -81,6 +77,15 @@ resource "google_cloud_run_service" "python_worker" {
             }
           }
         }
+        env {
+          name = "COHERE_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.cohere_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
       }
     }
   }
@@ -92,13 +97,12 @@ resource "google_cloud_run_service" "python_worker" {
 
   depends_on = [
     google_artifact_registry_repository.default,
-    google_service_account.code_execution_worker_sa,
-    google_project_iam_member.code_execution_worker_datastore_user
+    google_service_account.rag_query_sa,
+    google_project_iam_member.rag_query_sa_aiplatform_user
   ]
 }
 
-# Output the URL of the python-worker-service
-output "python_worker_service_url" {
-  description = "URL of the Python Worker Service"
-  value       = google_cloud_run_service.python_worker.status[0].url
+output "rag_query_service_url" {
+  description = "URL of the RAG Query Service"
+  value       = google_cloud_run_service.rag_query_service.status[0].url
 } 

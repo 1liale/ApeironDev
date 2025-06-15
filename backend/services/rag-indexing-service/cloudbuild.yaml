@@ -1,0 +1,39 @@
+steps:
+  # 1. Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
+      - '.'
+    dir: 'backend/services/rag-indexing-service'
+
+  # 2. Push the Docker image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
+
+  # 3. Deploy the new image to Cloud Run
+  - name: 'gcr.io/google-cloud-sdk/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
+      - '--region'
+      - '${_GCP_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--no-allow-unauthenticated' # This service should be private
+      - '--quiet' 
+    entrypoint: 'gcloud'
+
+images:
+  - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPO_ID}/${_SERVICE_NAME}:latest'
+
+# Substitutions will be provided by the google_cloudbuild_trigger in cicd.tf
+# _GCP_REGION
+# _ARTIFACT_REGISTRY_REPO_ID
+# _SERVICE_NAME 

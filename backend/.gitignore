@@ -23,6 +23,7 @@ dist/
 crash.log
 *.tfplan
 .terraform.lock.hcl
+secrets.tfvars
 
 # IDE / Editor specific
 .vscode/
