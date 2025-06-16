@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Cohere Configuration for Reranking
     COHERE_API_KEY: str
 
+    # Google AI Configuration
+    GOOGLE_API_KEY: str
+
     # Gemini Model Configuration
     GEMINI_MODEL_NAME: str = "gemini-1.5-pro-preview-0409"
     EMBEDDING_MODEL_NAME: str = "models/embedding-001"
