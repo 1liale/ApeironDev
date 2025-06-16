@@ -71,6 +71,20 @@ resource "google_secret_manager_secret_iam_member" "rag_query_sa_can_access_cohe
   member    = "serviceAccount:${google_service_account.rag_query_sa.email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "rag_query_sa_can_access_google_api_key" {
+  project   = google_secret_manager_secret.google_api_key.project
+  secret_id = google_secret_manager_secret.google_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.rag_query_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "rag_indexing_sa_can_access_google_api_key" {
+  project   = google_secret_manager_secret.google_api_key.project
+  secret_id = google_secret_manager_secret.google_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.rag_indexing_sa.email}"
+}
+
 # --- API Service (api_service_sa) Permissions ---
 
 # (Optional) allows for tracing of API service requests
