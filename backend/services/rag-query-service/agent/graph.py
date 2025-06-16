@@ -1,6 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Optional
 
@@ -96,19 +96,46 @@ workflow.add_node("summarize_context", summarize_context)
 workflow.set_entry_point("plan_retrieval")
 
 # Define conditional edges from the planning node
+def route_after_planning(state: AgentState) -> str:
+    """Route to the appropriate next step based on the planning decision."""
+    action = state['next_action']
+    if action == "search_code_and_web":
+        return "retrieve_codebase"  # We'll handle the web search after codebase
+    elif action == "search_code_only":
+        return "retrieve_codebase"
+    elif action == "search_web_only":
+        return "retrieve_web"
+    else:  # no_retrieval
+        return "summarize_context"
+
 workflow.add_conditional_edges(
     "plan_retrieval",
-    lambda state: state['next_action'],
+    route_after_planning,
     {
-        "search_code_and_web": ["retrieve_codebase", "retrieve_web"],
-        "search_code_only": "retrieve_codebase",
-        "search_web_only": "retrieve_web",
-        "no_retrieval": "summarize_context",
+        "retrieve_codebase": "retrieve_codebase",
+        "retrieve_web": "retrieve_web",
+        "summarize_context": "summarize_context",
     }
 )
 
-# After retrieval, all paths lead to summarization
-workflow.add_edge("retrieve_codebase", "summarize_context")
+# For the "search_code_and_web" case, we need to route from codebase to web search
+def route_after_codebase(state: AgentState) -> str:
+    """Route after codebase search - check if we also need web search."""
+    if state['next_action'] == "search_code_and_web":
+        return "retrieve_web"
+    else:
+        return "summarize_context"
+
+workflow.add_conditional_edges(
+    "retrieve_codebase",
+    route_after_codebase,
+    {
+        "retrieve_web": "retrieve_web",
+        "summarize_context": "summarize_context",
+    }
+)
+
+# After web retrieval, go to summarization
 workflow.add_edge("retrieve_web", "summarize_context")
 
 # The final node in this RAG segment

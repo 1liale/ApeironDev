@@ -26,7 +26,11 @@ hyde_chain = hyde_prompt_template | hyde_llm
 
 # --- Reranker Initialization ---
 # The user needs to provide a Cohere API key in the environment variables.
-reranker = CohereRerank(cohere_api_key=settings.COHERE_API_KEY, top_n=10)
+reranker = CohereRerank(
+    cohere_api_key=settings.COHERE_API_KEY, 
+    model="rerank-english-v3.0",  # Cohere's latest rerank model
+    top_n=10
+)
 
 
 # --- Codebase Search Tool ---

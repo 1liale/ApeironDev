@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str
     GCP_REGION: str = "us-east1"
     
+    # Google AI Configuration
+    GOOGLE_API_KEY: str
+    
     # Embedding Model Configuration
     EMBEDDING_MODEL_NAME: str = "models/embedding-001"
     EMBEDDING_MODEL_DIM: int = 768
