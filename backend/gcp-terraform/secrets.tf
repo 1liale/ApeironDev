@@ -40,3 +40,11 @@ resource "google_secret_manager_secret" "cohere_api_key" {
     auto {}
   }
 } 
+
+resource "google_secret_manager_secret" "google_api_key" {
+  secret_id = "google-api-key"
+  project   = var.gcp_project_id
+  replication {
+    auto {}
+  }
+}

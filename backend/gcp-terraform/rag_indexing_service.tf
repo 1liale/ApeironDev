@@ -69,6 +69,15 @@ resource "google_cloud_run_service" "rag_indexing_service" {
             }
           }
         }
+        env {
+          name = "GOOGLE_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.google_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
       }
     }
   }
