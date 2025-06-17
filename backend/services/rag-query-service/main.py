@@ -1,7 +1,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+import uvicorn
 
 import google.generativeai as genai
 import lancedb
@@ -214,6 +214,5 @@ async def handle_cloud_task(request: Request):
         raise HTTPException(status_code=500, detail=f"Task processing failed: {str(e)}")
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port) 
