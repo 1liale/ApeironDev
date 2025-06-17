@@ -1,27 +1,46 @@
-import functions_framework
-from flask import Request, jsonify
-from pydantic import BaseModel, Field
-from typing import List
-import lancedb
-import boto3
+import logging
 import os
-from botocore.client import Config
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-from lancedb.pydantic import LanceModel, Vector
+from contextlib import asynccontextmanager
+from typing import List
 
+import google.generativeai as genai
+import lancedb
 from config import settings
+from fastapi import FastAPI, Request, HTTPException
+from pydantic import BaseModel, Field
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from lancedb.pydantic import LanceModel, Vector
+from google.cloud import firestore as google_firestore
+import boto3
 
-# --- Pydantic Models & LanceDB Schema ---
-class FileUpdate(BaseModel):
-    """A single file that was updated in the commit."""
-    file_path: str = Field(..., description="The full path of the file in the R2 bucket.")
-    # In the future, we could add status: "created" | "updated" | "deleted"
+# Environment Variables
+COLLECTION_ID_JOBS = os.getenv("COLLECTION_ID_JOBS", "jobs")
 
-class IndexRequest(BaseModel):
-    """The request body for the indexing function."""
-    workspace_id: str = Field(..., description="The ID of the workspace being updated.")
-    files: List[FileUpdate] = Field(..., description="A list of files that were updated.")
+# Global Firestore client
+firestore_client: google_firestore.Client | None = None
+
+def get_firestore_client() -> google_firestore.Client | None:
+    return firestore_client
+
+def init_firestore_client():
+    global firestore_client
+    
+    if settings.GCP_PROJECT_ID:
+        try:
+            firestore_client = google_firestore.Client(project=settings.GCP_PROJECT_ID)
+            logging.info("Firestore client initialized.")
+        except Exception as e:
+            logging.error(f"Failed to initialize Firestore client: {e}")
+            firestore_client = None
+    else:
+        logging.error("GCP_PROJECT_ID environment variable not set. Firestore client NOT initialized.")
+        firestore_client = None
+
+class CloudTaskIndexPayload(BaseModel):
+    """Cloud Tasks payload for indexing."""
+    job_id: str
+    workspace_id: str
+    files: List[str]
 
 class CodeSnippet(LanceModel):
     """Pydantic model for the data we'll store in LanceDB."""
@@ -30,40 +49,30 @@ class CodeSnippet(LanceModel):
     file_path: str
     workspace_id: str
 
-# --- Clients and Splitter Initialization ---
-# These are initialized globally to be reused across function invocations.
-embeddings_model = GoogleGenerativeAIEmbeddings(model=settings.EMBEDDING_MODEL_NAME)
-
-s3_client = boto3.client(
-    "s3",
-    endpoint_url=settings.R2_ENDPOINT_URL,
-    aws_access_key_id=settings.R2_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-    region_name="auto", # R2 doesn't use regions, 'auto' is a safe default
-    config=Config(signature_version='s3v4')
-)
-
-# Text splitter is now determined dynamically based on file type.
-
-# --- Cloud Function Entrypoint ---
-@functions_framework.http
-def index_workspace_handler(request: Request):
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    HTTP Cloud Function to index workspace code changes into LanceDB.
+    Handle application startup and shutdown events.
+    """
+    # Startup: Connect to LanceDB and initialize dependencies
+    logging.info("Connecting to LanceDB and initializing resources...")
     
-    This function is triggered by the Go API service after a successful commit.
-    """
-    if request.method != 'POST':
-        return 'Only POST method is accepted', 405
-
     try:
-        json_data = request.get_json(silent=True)
-        if not json_data:
-            return jsonify({"error": "Invalid JSON"}), 400
+        # Initialize Firestore client
+        init_firestore_client()
         
-        index_request = IndexRequest.model_validate(json_data)
-        print(f"Received indexing request for workspace: {index_request.workspace_id}")
-
+        # Configure Google Generative AI
+        genai.configure(api_key=settings.GOOGLE_API_KEY)
+        
+        # Initialize R2/S3 client
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=settings.R2_ENDPOINT_URL,
+            aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+            region_name='auto'
+        )
+        
         # Connect to LanceDB
         storage_options = {
             "aws_access_key_id": settings.R2_ACCESS_KEY_ID,
@@ -71,119 +80,194 @@ def index_workspace_handler(request: Request):
             "aws_endpoint_url": settings.R2_ENDPOINT_URL,
             "aws_region": "auto",
         }
-        db = lancedb.connect(settings.LANCEDB_URI, storage_options=storage_options)
         
-        # We pass the Pydantic model directly to create the table
-        table = db.create_table(settings.LANCEDB_TABLE_NAME, schema=CodeSnippet, exist_ok=True)
+        db_connection = lancedb.connect(
+            settings.LANCEDB_URI,
+            storage_options=storage_options
+        )
         
-        # Create a full-text search index on the 'text' column if it doesn't exist.
-        # This is crucial for hybrid search (keyword + vector).
-        # Using replace=True ensures the index is up-to-date with any potential configuration changes.
-        try:
-            table.create_fts_index("text", replace=True)
-            print("  - Ensured FTS index exists for 'text' column.")
-        except Exception as e:
-            print(f"  - Warning: Could not create FTS index. Keyword search may not be available. Error: {e}")
+        # Initialize embedding model
+        embedding_model = GoogleGenerativeAIEmbeddings(
+            model=settings.EMBEDDING_MODEL_NAME,
+            google_api_key=settings.GOOGLE_API_KEY
+        )
         
-        snippets_to_process = []
-
-        # We'll use a fallback for any language not explicitly supported with tree-sitter
-        fallback_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-
-        for file in index_request.files:
-            file_path = file.file_path
-            print(f"Processing file: {file_path}")
-
-            # 1. Delete existing vectors for this file to ensure freshness
-            try:
-                table.delete(f"file_path = '{file_path}' AND workspace_id = '{index_request.workspace_id}'")
-                print(f"  - Deleted old snippets for {file_path}")
-            except Exception as e:
-                # This might fail if the table is empty, which is fine.
-                print(f"  - Could not delete old snippets for {file_path} (may be new file): {e}")
-
-            # 2. Download file content from R2
-            try:
-                response = s3_client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=file_path)
-                file_content = response['Body'].read().decode('utf-8')
-            except s3_client.exceptions.NoSuchKey:
-                print(f"  - File not found in R2: {file_path}. Assuming it was deleted.")
-                continue # Skip to the next file
-            
-            # 3. Chunk the file content based on its type
-            _, file_extension = os.path.splitext(file_path)
-            
-            chunks = []
-            if file_extension == ".py":
-                # Use language-aware splitter for Python files
-                python_splitter = RecursiveCharacterTextSplitter.from_language(
-                    language=Language.PYTHON,
-                    chunk_size=1000,
-                    chunk_overlap=200
-                )
-                chunks = python_splitter.split_text(file_content)
-                print(f"  - Split file using Python-aware splitter into {len(chunks)} chunks.")
-            elif file_extension in [".js", ".jsx", ".ts", ".tsx"]:
-                # Use language-aware splitter for JavaScript/TypeScript files
-                js_splitter = RecursiveCharacterTextSplitter.from_language(
-                    language=Language.JS,
-                    chunk_size=1000,
-                    chunk_overlap=200
-                )
-                chunks = js_splitter.split_text(file_content)
-                print(f"  - Split file using JavaScript-aware splitter into {len(chunks)} chunks.")
-            elif file_extension in [".go"]:
-                # Use language-aware splitter for Go files
-                go_splitter = RecursiveCharacterTextSplitter.from_language(
-                    language=Language.GO,
-                    chunk_size=1000,
-                    chunk_overlap=200
-                )
-                chunks = go_splitter.split_text(file_content)
-                print(f"  - Split file using Go-aware splitter into {len(chunks)} chunks.")
-            else:
-                # Use a recursive character splitter as a fallback for other file types
-                chunks = fallback_splitter.split_text(file_content)
-                print(f"  - Split file using fallback splitter into {len(chunks)} chunks.")
-
-            # 4. Collect all chunks with their metadata
-            for chunk in chunks:
-                snippets_to_process.append({
-                    "text": chunk,
-                    "file_path": file_path,
-                    "workspace_id": index_request.workspace_id,
-                })
+        # Store in app state
+        app.state.db_connection = db_connection
+        app.state.embedding_model = embedding_model
+        app.state.s3_client = s3_client
         
-        # 5. Perform batch embedding and add to table
-        if snippets_to_process:
-            print(f"Embedding {len(snippets_to_process)} new snippets...")
-            
-            # Extract just the text for batch embedding
-            texts_to_embed = [s['text'] for s in snippets_to_process]
-            vectors = embeddings_model.embed_documents(texts_to_embed)
-            
-            # Create the final list of data to add to LanceDB
-            data_to_add = []
-            for i, snippet_data in enumerate(snippets_to_process):
-                data_to_add.append(CodeSnippet(
-                    vector=vectors[i],
-                    text=snippet_data['text'],
-                    file_path=snippet_data['file_path'],
-                    workspace_id=snippet_data['workspace_id']
-                ))
-
-            print(f"Adding {len(data_to_add)} new snippets to LanceDB...")
-            table.add(data_to_add)
-            print("  - Successfully added snippets.")
-        else:
-            print("No new snippets to add.")
-
-        return jsonify({
-            "status": "success",
-            "message": f"Successfully processed {len(index_request.files)} files for workspace {index_request.workspace_id}.",
-            "snippets_added": len(snippets_to_process),
-        }), 200
-
+        logging.info(f"Successfully connected to LanceDB. Available tables: {db_connection.table_names()}")
+        
     except Exception as e:
-        print(f"FATAL: Error processing indexing request: {e}")
-        return jsonify({"error": "Internal Server Error"}), 500 
+        logging.error(f"Failed to initialize services: {e}")
+        raise
+    
+    yield  # App runs here
+    
+    # Shutdown
+    logging.info("RAG Indexing Service shutting down.")
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="RAG Indexing Service",
+    description="Service to index workspace files for RAG queries",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+@google_firestore.transactional
+def _update_job_in_transaction(transaction: google_firestore.Transaction, job_ref: google_firestore.DocumentReference, update_data: dict):
+    transaction.update(job_ref, update_data)
+
+async def update_job_status(job_id: str, status: str, output: str = None, error: str = None):
+    """Update job status in Firestore"""
+    firestore_client = get_firestore_client()
+    if not firestore_client:
+        logging.error(f"Job {job_id}: Firestore client not available for status update.")
+        raise RuntimeError("Firestore client not available.")
+    
+    try:
+        job_ref = firestore_client.collection(COLLECTION_ID_JOBS).document(job_id)
+        update_data = {'status': status}
+        
+        if output is not None:
+            update_data['output'] = output
+        if error is not None:
+            update_data['error'] = error
+            
+        transaction = firestore_client.transaction()
+        _update_job_in_transaction(transaction, job_ref, update_data)
+        logging.info(f"Updated job {job_id} status to {status}")
+    except Exception as e:
+        logging.error(f"Failed to update job {job_id} status: {e}")
+        raise RuntimeError(f"Firestore update failed for job {job_id}") from e
+
+async def process_files_for_indexing(workspace_id: str, file_paths: List[str], app_state):
+    """Process files and add them to the vector database"""
+    db_connection = app_state.db_connection
+    embedding_model = app_state.embedding_model
+    s3_client = app_state.s3_client
+    
+    # Ensure table exists
+    table_name = settings.LANCEDB_TABLE_NAME
+    if table_name not in db_connection.table_names():
+        # Create table with schema
+        db_connection.create_table(table_name, schema=CodeSnippet)
+        logging.info(f"Created new table: {table_name}")
+    
+    table = db_connection.open_table(table_name)
+    
+    indexed_files = []
+    
+    for file_path in file_paths:
+        try:
+            # Skip non-code files
+            if not any(file_path.endswith(ext) for ext in ['.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.java', '.cpp', '.c', '.rs', '.rb', '.php']):
+                logging.info(f"Skipping non-code file: {file_path}")
+                continue
+                
+            # Construct R2 object key (this should match your workspace file structure)
+            object_key = f"workspaces/{workspace_id}/files/{file_path}"
+            
+            # Download file content from R2
+            try:
+                response = s3_client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=object_key)
+                file_content = response['Body'].read().decode('utf-8')
+            except Exception as e:
+                logging.warning(f"Could not download file {file_path}: {e}")
+                continue
+            
+            # Skip empty files
+            if not file_content.strip():
+                continue
+                
+            # Generate embeddings for the file content
+            embeddings = embedding_model.embed_documents([file_content])
+            
+            # Create code snippet record
+            code_snippet = CodeSnippet(
+                vector=embeddings[0],
+                text=file_content,
+                file_path=file_path,
+                workspace_id=workspace_id
+            )
+            
+            # First, delete existing records for this file
+            table.delete(f"file_path = '{file_path}' AND workspace_id = '{workspace_id}'")
+            
+            # Add new record
+            table.add([code_snippet])
+            
+            indexed_files.append(file_path)
+            logging.info(f"Successfully indexed file: {file_path}")
+            
+        except Exception as e:
+            logging.error(f"Error processing file {file_path}: {e}")
+            continue
+    
+    return indexed_files
+
+@app.get("/")
+def read_root():
+    """Health check endpoint"""
+    return {
+        "message": "RAG Indexing Service is running",
+        "version": "1.0.0",
+        "status": "healthy"
+    }
+
+@app.post("/")
+async def handle_cloud_task(request: Request):
+    """
+    Handle Cloud Tasks payload for async RAG indexing.
+    """
+    try:
+        payload_data = await request.json()
+        payload = CloudTaskIndexPayload(**payload_data)
+        
+        logging.info(f"Processing Cloud Task indexing for job {payload.job_id}")
+        
+        # Ensure Firestore client is available
+        if not get_firestore_client():
+            raise HTTPException(status_code=503, detail="Firestore client not available.")
+        
+        # Update job status to processing
+        await update_job_status(payload.job_id, "processing")
+        
+        # Process files for indexing
+        indexed_files = await process_files_for_indexing(
+            payload.workspace_id,
+            payload.files,
+            request.app.state
+        )
+        
+        # Update job status to completed
+        result_message = f"Successfully indexed {len(indexed_files)} files for workspace {payload.workspace_id}"
+        await update_job_status(payload.job_id, "completed", output=result_message)
+        
+        logging.info(f"Successfully processed indexing for job {payload.job_id}")
+        
+        return {
+            "status": "success", 
+            "job_id": payload.job_id,
+            "indexed_files": len(indexed_files)
+        }
+        
+    except Exception as e:
+        logging.error(f"Cloud Task indexing error: {e}")
+        
+        # Try to update job status to failed
+        try:
+            payload_data = await request.json()
+            payload = CloudTaskIndexPayload(**payload_data)
+            await update_job_status(payload.job_id, "failed", error=str(e))
+        except:
+            pass  # If we can't even parse the payload, log and continue
+            
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port) 

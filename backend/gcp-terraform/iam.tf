@@ -114,6 +114,20 @@ resource "google_service_account_iam_member" "api_service_can_act_as_python_work
   member             = "serviceAccount:${google_service_account.api_service_sa.email}"
 }
 
+# Allows api_service_sa to impersonate rag_indexing_sa for creating OIDC tokens for tasks
+resource "google_service_account_iam_member" "api_service_can_act_as_rag_indexing_sa" {
+  service_account_id = google_service_account.rag_indexing_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
+# Allows api_service_sa to impersonate rag_query_sa for creating OIDC tokens for tasks
+resource "google_service_account_iam_member" "api_service_can_act_as_rag_query_sa" {
+  service_account_id = google_service_account.rag_query_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api_service_sa.email}"
+}
+
 # api-service needs to read/write to Firestore (for job status and results)
 resource "google_project_iam_member" "api_service_datastore_user" {
   provider = google
@@ -127,6 +141,20 @@ resource "google_project_iam_member" "api_service_datastore_user" {
 # Allows Cloud Tasks Service Agent to create OIDC tokens for the code_execution_worker_sa
 resource "google_service_account_iam_member" "tasks_agent_can_act_as_worker_sa" {
   service_account_id = google_service_account.code_execution_worker_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+}
+
+# Allows Cloud Tasks Service Agent to create OIDC tokens for the rag_indexing_sa
+resource "google_service_account_iam_member" "tasks_agent_can_act_as_rag_indexing_sa" {
+  service_account_id = google_service_account.rag_indexing_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+}
+
+# Allows Cloud Tasks Service Agent to create OIDC tokens for the rag_query_sa
+resource "google_service_account_iam_member" "tasks_agent_can_act_as_rag_query_sa" {
+  service_account_id = google_service_account.rag_query_sa.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
 }
@@ -148,6 +176,14 @@ resource "google_project_iam_member" "rag_indexing_sa_aiplatform_user" {
   member  = "serviceAccount:${google_service_account.rag_indexing_sa.email}"
 }
 
+# rag-indexing-service needs to write to Firestore (job output and status updates)
+resource "google_project_iam_member" "rag_indexing_service_datastore_user" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/datastore.user"
+  member   = "serviceAccount:${google_service_account.rag_indexing_sa.email}"
+}
+
 # --- RAG Query Service (rag_query_sa) Permissions ---
 
 # Allow RAG query service to access Vertex AI embedding models
@@ -155,6 +191,14 @@ resource "google_project_iam_member" "rag_query_sa_aiplatform_user" {
   project = var.gcp_project_id
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.rag_query_sa.email}"
+}
+
+# rag-query-service needs to write to Firestore (job output and status updates)
+resource "google_project_iam_member" "rag_query_service_datastore_user" {
+  provider = google
+  project  = var.gcp_project_id
+  role     = "roles/datastore.user"
+  member   = "serviceAccount:${google_service_account.rag_query_sa.email}"
 }
 
 # --- Cloud Run Service Permissions ---
@@ -194,4 +238,42 @@ resource "google_cloud_run_service_iam_policy" "tasks_invokes_python_worker" {
   policy_data = data.google_iam_policy.tasks_invoker_policy.policy_data
 
   depends_on = [google_cloud_run_service.python_worker]
+}
+
+# Allows rag_indexing_sa to invoke the RAG Indexing Cloud Run service
+data "google_iam_policy" "rag_indexing_tasks_invoker_policy" {
+  binding {
+    role = "roles/run.invoker"
+    members = [
+      "serviceAccount:${google_service_account.rag_indexing_sa.email}",
+    ]
+  }
+}
+
+resource "google_cloud_run_service_iam_policy" "tasks_invokes_rag_indexing_service" {
+  project     = google_cloud_run_service.rag_indexing_service.project
+  location    = google_cloud_run_service.rag_indexing_service.location
+  service     = google_cloud_run_service.rag_indexing_service.name
+  policy_data = data.google_iam_policy.rag_indexing_tasks_invoker_policy.policy_data
+
+  depends_on = [google_cloud_run_service.rag_indexing_service]
+}
+
+# Allows rag_query_sa to invoke the RAG Query Cloud Run service
+data "google_iam_policy" "rag_query_tasks_invoker_policy" {
+  binding {
+    role = "roles/run.invoker"
+    members = [
+      "serviceAccount:${google_service_account.rag_query_sa.email}",
+    ]
+  }
+}
+
+resource "google_cloud_run_service_iam_policy" "tasks_invokes_rag_query_service" {
+  project     = google_cloud_run_service.rag_query_service.project
+  location    = google_cloud_run_service.rag_query_service.location
+  service     = google_cloud_run_service.rag_query_service.name
+  policy_data = data.google_iam_policy.rag_query_tasks_invoker_policy.policy_data
+
+  depends_on = [google_cloud_run_service.rag_query_service]
 }

@@ -19,8 +19,6 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/iterator"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // checkWorkspaceMembership queries Firestore to see if a user is a member of a workspace.
@@ -60,23 +58,21 @@ type ApiController struct {
 	R2PresignClient         *s3.PresignClient
 	R2S3Client              *s3.Client
 	R2BucketName            string
-	PythonWorkerURL         string
-	WorkerSAEmail           string
-	CloudTasksQueuePath     string
+	Services                ServicesConfig
+	AppConfig               *AppConfig
 	FirestoreJobsCollection string
 }
 
 // NewApiController creates a new ApiController.
-func NewApiController(fs *firestore.Client, tasksClient *cloudtasks.Client, presignClient *s3.PresignClient, r2S3Client *s3.Client, r2BucketName, pythonWorkerURL, workerSAEmail, cloudTasksQueuePath, firestoreJobsCollection string) *ApiController {
+func NewApiController(fs *firestore.Client, tasksClient *cloudtasks.Client, presignClient *s3.PresignClient, r2S3Client *s3.Client, r2BucketName string, appConfig *AppConfig, firestoreJobsCollection string) *ApiController {
 	return &ApiController{
 		FirestoreClient:         fs,
 		TasksClient:             tasksClient,
 		R2PresignClient:         presignClient,
 		R2S3Client:              r2S3Client,
 		R2BucketName:            r2BucketName,
-		PythonWorkerURL:         pythonWorkerURL,
-		WorkerSAEmail:           workerSAEmail,
-		CloudTasksQueuePath:     cloudTasksQueuePath,
+		Services:                appConfig.Services,
+		AppConfig:               appConfig,
 		FirestoreJobsCollection: firestoreJobsCollection,
 	}
 }
@@ -523,6 +519,25 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		Status:                "success",
 		FinalWorkspaceVersion: req.WorkspaceVersion,
 	})
+
+	// Trigger RAG indexing for modified files (fire and forget)
+	go func() {
+		modifiedFiles := make([]string, 0)
+		for _, action := range req.SyncActions {
+			if action.Action == "upsert" && action.Type == "file" {
+				modifiedFiles = append(modifiedFiles, action.FilePath)
+			}
+		}
+
+		if len(modifiedFiles) > 0 {
+			indexingJobID := uuid.New().String()
+			if err := ac.enqueueRagIndexing(indexingJobID, workspaceID, modifiedFiles); err != nil {
+				logCtx.WithError(err).WithField("indexing_job_id", indexingJobID).Error("Failed to enqueue RAG indexing task")
+			} else {
+				logCtx.WithField("indexing_job_id", indexingJobID).WithField("file_count", len(modifiedFiles)).Info("RAG indexing task enqueued successfully")
+			}
+		}
+	}()
 }
 
 // SanitizePathToDocID converts a file path to a Firestore-safe document ID.
@@ -578,23 +593,21 @@ func (ac *ApiController) ExecuteCode(c *gin.Context) {
 	}
 
 	taskReq := &cloudtaskspb.CreateTaskRequest{
-		Parent: ac.CloudTasksQueuePath,
+		Parent: ac.AppConfig.GetQueuePath(ac.Services.PythonWorker.QueueID),
 		Task: &cloudtaskspb.Task{
 			MessageType: &cloudtaskspb.Task_HttpRequest{
 				HttpRequest: &cloudtaskspb.HttpRequest{
 					HttpMethod: cloudtaskspb.HttpMethod_POST,
-					Url:        fmt.Sprintf("%s/execute", ac.PythonWorkerURL),
+					Url:        fmt.Sprintf("%s/execute", ac.Services.PythonWorker.ServiceURL),
 					Headers:    map[string]string{"Content-Type": "application/json"},
 					Body:       payloadBytes,
 					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
 						OidcToken: &cloudtaskspb.OidcToken{
-							ServiceAccountEmail: ac.WorkerSAEmail,
+							ServiceAccountEmail: ac.Services.PythonWorker.ServiceAccount,
 						},
 					},
 				},
 			},
-			DispatchDeadline: durationpb.New(10 * time.Minute),
-			ScheduleTime:     timestamppb.New(time.Now().UTC().Add(1 * time.Second)),
 		},
 	}
 
@@ -984,23 +997,21 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	}
 
 	taskReq := &cloudtaskspb.CreateTaskRequest{
-		Parent: ac.CloudTasksQueuePath,
+		Parent: ac.AppConfig.GetQueuePath(ac.Services.PythonWorker.QueueID),
 		Task: &cloudtaskspb.Task{
 			MessageType: &cloudtaskspb.Task_HttpRequest{
 				HttpRequest: &cloudtaskspb.HttpRequest{
 					HttpMethod: cloudtaskspb.HttpMethod_POST,
-					Url:        ac.PythonWorkerURL + "/execute_auth",
+					Url:        fmt.Sprintf("%s/execute", ac.Services.PythonWorker.ServiceURL),
 					Headers:    map[string]string{"Content-Type": "application/json"},
 					Body:       payloadBytes,
 					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
 						OidcToken: &cloudtaskspb.OidcToken{
-							ServiceAccountEmail: ac.WorkerSAEmail,
-							Audience:            ac.PythonWorkerURL,
+							ServiceAccountEmail: ac.Services.PythonWorker.ServiceAccount,
 						},
 					},
 				},
 			},
-			DispatchDeadline: &durationpb.Duration{Seconds: 1800},
 		},
 	}
 
@@ -1022,5 +1033,135 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 		Message:               "Authenticated code execution job created successfully.",
 		JobID:                 jobID,
 		FinalWorkspaceVersion: workspaceData.WorkspaceVersion,
+	})
+}
+
+// enqueueTask creates a Cloud Task with OIDC authentication
+func (ac *ApiController) enqueueTask(queuePath, serviceURL, serviceAccount string, payload interface{}) (*cloudtaskspb.Task, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal task payload: %w", err)
+	}
+
+	task := &cloudtaskspb.Task{
+		MessageType: &cloudtaskspb.Task_HttpRequest{
+			HttpRequest: &cloudtaskspb.HttpRequest{
+				HttpMethod: cloudtaskspb.HttpMethod_POST,
+				Url:        serviceURL,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+				Body:       payloadBytes,
+				AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
+					OidcToken: &cloudtaskspb.OidcToken{
+						ServiceAccountEmail: serviceAccount,
+					},
+				},
+			},
+		},
+	}
+
+	req := &cloudtaskspb.CreateTaskRequest{
+		Parent: queuePath,
+		Task:   task,
+	}
+
+	return ac.TasksClient.CreateTask(context.Background(), req)
+}
+
+// enqueueRagQuery enqueues a RAG query task
+func (ac *ApiController) enqueueRagQuery(jobID, userID, workspaceID, query string) error {
+	payload := RagQueryPayload{
+		JobID:       jobID,
+		UserID:      userID,
+		WorkspaceID: workspaceID,
+		Query:       query,
+	}
+
+	queuePath := ac.AppConfig.GetQueuePath(ac.Services.RagQuery.QueueID)
+	_, err := ac.enqueueTask(queuePath, ac.Services.RagQuery.ServiceURL, ac.Services.RagQuery.ServiceAccount, payload)
+	return err
+}
+
+// enqueueRagIndexing enqueues a RAG indexing task
+func (ac *ApiController) enqueueRagIndexing(jobID, workspaceID string, files []string) error {
+	payload := RagIndexingPayload{
+		JobID:       jobID,
+		WorkspaceID: workspaceID,
+		Files:       files,
+	}
+
+	queuePath := ac.AppConfig.GetQueuePath(ac.Services.RagIndexing.QueueID)
+	_, err := ac.enqueueTask(queuePath, ac.Services.RagIndexing.ServiceURL, ac.Services.RagIndexing.ServiceAccount, payload)
+	return err
+}
+
+// RagQuery handles RAG query requests from the frontend
+func (ac *ApiController) RagQuery(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		log.Error("UserID not found in context after auth middleware")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User authentication error"})
+		return
+	}
+
+	var req RagQueryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.WithError(err).Warn("Invalid RAG query request body")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	logCtx := log.WithFields(log.Fields{
+		"workspace_id": req.WorkspaceID,
+		"user_id":      userID,
+		"handler":      "RagQuery",
+	})
+
+	// Authorization check
+	isMember, err := checkWorkspaceMembership(c.Request.Context(), ac.FirestoreClient, userID, req.WorkspaceID)
+	if err != nil {
+		logCtx.WithError(err).Error("Workspace membership check failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify workspace membership"})
+		return
+	}
+	if !isMember {
+		logCtx.Warn("User does not have access to this workspace")
+		c.JSON(http.StatusForbidden, gin.H{"error": "User does not have access to this workspace"})
+		return
+	}
+
+	// Create job in Firestore
+	jobID := uuid.New().String()
+	now := NowISO8601()
+	expiresAt := TimeToISO8601(time.Now().Add(24 * time.Hour))
+
+	job := Job{
+		Status:         "queued",
+		Language:       "rag_query",
+		SubmittedAt:    now,
+		ExpiresAt:      expiresAt,
+		UserID:         userID,
+		WorkspaceID:    req.WorkspaceID,
+		ExecutionType:  "rag_query",
+	}
+
+	jobDocRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
+	if _, err := jobDocRef.Set(c.Request.Context(), job); err != nil {
+		logCtx.WithError(err).Error("Failed to create RAG query job in Firestore")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create query job"})
+		return
+	}
+
+	// Enqueue RAG query task
+	if err := ac.enqueueRagQuery(jobID, userID, req.WorkspaceID, req.Query); err != nil {
+		logCtx.WithError(err).Error("Failed to enqueue RAG query task")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue query task"})
+		return
+	}
+
+	logCtx.WithField("job_id", jobID).Info("RAG query task enqueued successfully")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "RAG query enqueued successfully",
+		"job_id":  jobID,
 	})
 } 

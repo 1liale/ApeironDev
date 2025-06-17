@@ -172,9 +172,7 @@ func main() {
 		r2PresignClient,
 		r2S3Client,
 		cfg.R2BucketName,
-		cfg.PythonWorkerURL,
-		cfg.WorkerSAEmail,
-		cfg.CloudTasksQueuePath,
+		cfg,
 		cfg.FirestoreJobsCollection,
 	)
 
@@ -190,6 +188,9 @@ func main() {
 
 		// Authenticated Code Execution
 		authenticatedRoutes.POST("/workspaces/:workspaceId/execute", apiController.ExecuteCodeAuthenticated)
+
+		// RAG Query Endpoint
+		authenticatedRoutes.POST("/rag/query", apiController.RagQuery)
 	}
 
 	// Setup public routes (no auth required)
