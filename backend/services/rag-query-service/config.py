@@ -32,7 +32,6 @@ class Settings(BaseSettings):
 
     # LanceDB Configuration
     LANCEDB_TABLE_NAME: str = "code-vectors"
-    LANCEDB_SUB_PATH: str = "lancedb-data"
 
     # Computed properties for convenience
     @computed_field
@@ -44,8 +43,8 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def LANCEDB_URI(self) -> str:
-        """Construct the LanceDB URI from bucket and sub-path."""
-        return f"s3://{self.R2_BUCKET_NAME}/{self.LANCEDB_SUB_PATH}"
+        """Construct the LanceDB URI pointing directly to the table directory (kept in sync with the indexing service)."""
+        return f"s3://{self.R2_BUCKET_NAME}/{self.LANCEDB_TABLE_NAME}"
 
 # Create a single settings instance to be used across the application
 settings = Settings() 
