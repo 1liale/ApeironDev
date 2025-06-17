@@ -81,18 +81,17 @@ export function useExecuteCode(params: UseExecuteCodeParams) {
     queryKey,
     queryFn,
     enabled,
+    // Disable all retries - execute once only
+    retry: false,
+    // Disable refetch behaviors
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
     // Cache never expires - same code/workspace should always produce same output
     staleTime: Infinity,
     // Keep in cache for 30 minutes after last use
     gcTime: 30 * 60 * 1000,
-    // Don't retry on workspace conflicts or auth errors
-    retry: (failureCount, error) => {
-      if (error.message.includes('workspace_conflict') || 
-          error.message.includes('401') || 
-          error.message.includes('403')) {
-        return false;
-      }
-      return failureCount < 2;
-    },
   });
 } 

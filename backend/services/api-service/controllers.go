@@ -560,77 +560,7 @@ func SanitizePathToDocID(path string) string {
 	return sanitized
 }
 
-// ExecuteCode handles non-authenticated code execution requests.
-func (ac *ApiController) ExecuteCode(c *gin.Context) {
-	var reqBody RequestBody 
-	if err := c.ShouldBindJSON(&reqBody); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
-		return
-	}
 
-	jobID := uuid.New().String()
-	ctx := c.Request.Context()
-
-	// Create job with standardized ISO 8601 timestamps
-	submittedAt := NowISO8601() // Exact JavaScript toISOString() format
-	expiresAt := TimeToISO8601(time.Now().UTC().Add(15 * 24 * time.Hour))
-
-	job := Job{
-		Status:      "queued",
-		Code:        reqBody.Code,
-		Language:    reqBody.Language,
-		Input:       reqBody.Input,
-		SubmittedAt: submittedAt, // Standardized ISO 8601 with milliseconds
-		ExpiresAt:   expiresAt,   // Standardized ISO 8601 with milliseconds
-	}
-
-	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
-	if _, err := docRef.Set(ctx, job); err != nil {
-		log.WithError(err).WithField("job_id", jobID).Error("Failed to create job in Firestore")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
-		return
-	}
-	log.WithFields(log.Fields{"job_id": jobID, "language": job.Language}).Info("Job queued in Firestore for public execution")
-
-	taskPayload := CloudTaskPayload{ 
-		JobID: jobID, Code: reqBody.Code, Language: reqBody.Language, Input: reqBody.Input,
-	}
-	payloadBytes, err := json.Marshal(taskPayload)
-	if err != nil {
-		log.WithError(err).WithField("job_id", jobID).Error("Failed to marshal task payload for public execution")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare job for execution"})
-		return
-	}
-
-	taskReq := &cloudtaskspb.CreateTaskRequest{
-		Parent: ac.AppConfig.GetQueuePath(ac.Services.PythonWorker.QueueID),
-		Task: &cloudtaskspb.Task{
-			MessageType: &cloudtaskspb.Task_HttpRequest{
-				HttpRequest: &cloudtaskspb.HttpRequest{
-					HttpMethod: cloudtaskspb.HttpMethod_POST,
-					Url:        fmt.Sprintf("%s/execute", ac.Services.PythonWorker.ServiceURL),
-					Headers:    map[string]string{"Content-Type": "application/json"},
-					Body:       payloadBytes,
-					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
-						OidcToken: &cloudtaskspb.OidcToken{
-							ServiceAccountEmail: ac.Services.PythonWorker.ServiceAccount,
-						},
-					},
-				},
-			},
-		},
-	}
-
-	createdTask, err := ac.TasksClient.CreateTask(ctx, taskReq)
-	if err != nil {
-		log.WithError(err).WithField("job_id", jobID).Error("Failed to create Cloud Task for public execution")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit job for execution"})
-		return
-	}
-
-	log.WithFields(log.Fields{"job_id": jobID, "task_name": createdTask.GetName()}).Info("Job enqueued to Cloud Tasks for public execution")
-	c.JSON(http.StatusOK, gin.H{"job_id": jobID})
-}
 
 // GetWorkspaceManifest handles requests to list all file metadata for a given workspace.
 func (ac *ApiController) GetWorkspaceManifest(c *gin.Context) {
@@ -886,6 +816,78 @@ func (ac *ApiController) ListWorkspaces(c *gin.Context) {
 	c.JSON(http.StatusOK, summaries)
 }
 
+// ExecuteCode handles non-authenticated code execution requests.
+func (ac *ApiController) ExecuteCode(c *gin.Context) {
+	var reqBody RequestBody 
+	if err := c.ShouldBindJSON(&reqBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	jobID := uuid.New().String()
+	ctx := c.Request.Context()
+
+	// Create job with standardized ISO 8601 timestamps
+	submittedAt := NowISO8601() // Exact JavaScript toISOString() format
+	expiresAt := TimeToISO8601(time.Now().UTC().Add(15 * 24 * time.Hour))
+
+	job := Job{
+		Status:      "queued",
+		Code:        reqBody.Code,
+		Language:    reqBody.Language,
+		Input:       reqBody.Input,
+		SubmittedAt: submittedAt, // Standardized ISO 8601 with milliseconds
+		ExpiresAt:   expiresAt,   // Standardized ISO 8601 with milliseconds
+	}
+
+	docRef := ac.FirestoreClient.Collection(ac.FirestoreJobsCollection).Doc(jobID)
+	if _, err := docRef.Set(ctx, job); err != nil {
+		log.WithError(err).WithField("job_id", jobID).Error("Failed to create job in Firestore")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job record"})
+		return
+	}
+	log.WithFields(log.Fields{"job_id": jobID, "language": job.Language}).Info("Job queued in Firestore for public execution")
+
+	taskPayload := CloudTaskPayload{ 
+		JobID: jobID, Code: reqBody.Code, Language: reqBody.Language, Input: reqBody.Input,
+	}
+	payloadBytes, err := json.Marshal(taskPayload)
+	if err != nil {
+		log.WithError(err).WithField("job_id", jobID).Error("Failed to marshal task payload for public execution")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare job for execution"})
+		return
+	}
+
+	taskReq := &cloudtaskspb.CreateTaskRequest{
+		Parent: ac.AppConfig.GetQueuePath(ac.Services.PythonWorker.QueueID),
+		Task: &cloudtaskspb.Task{
+			MessageType: &cloudtaskspb.Task_HttpRequest{
+				HttpRequest: &cloudtaskspb.HttpRequest{
+					HttpMethod: cloudtaskspb.HttpMethod_POST,
+					Url:        fmt.Sprintf("%s/execute", ac.Services.PythonWorker.ServiceURL),
+					Headers:    map[string]string{"Content-Type": "application/json"},
+					Body:       payloadBytes,
+					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{
+						OidcToken: &cloudtaskspb.OidcToken{
+							ServiceAccountEmail: ac.Services.PythonWorker.ServiceAccount,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	createdTask, err := ac.TasksClient.CreateTask(ctx, taskReq)
+	if err != nil {
+		log.WithError(err).WithField("job_id", jobID).Error("Failed to create Cloud Task for public execution")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit job for execution"})
+		return
+	}
+
+	log.WithFields(log.Fields{"job_id": jobID, "task_name": createdTask.GetName()}).Info("Job enqueued to Cloud Tasks for public execution")
+	c.JSON(http.StatusOK, gin.H{"job_id": jobID})
+}
+
 // ExecuteCodeAuthenticated handles requests for authenticated code execution.
 func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 	workspaceID := c.Param("workspaceId")
@@ -1012,7 +1014,7 @@ func (ac *ApiController) ExecuteCodeAuthenticated(c *gin.Context) {
 			MessageType: &cloudtaskspb.Task_HttpRequest{
 				HttpRequest: &cloudtaskspb.HttpRequest{
 					HttpMethod: cloudtaskspb.HttpMethod_POST,
-					Url:        fmt.Sprintf("%s/execute", ac.Services.PythonWorker.ServiceURL),
+					Url:        fmt.Sprintf("%s/execute_auth", ac.Services.PythonWorker.ServiceURL),
 					Headers:    map[string]string{"Content-Type": "application/json"},
 					Body:       payloadBytes,
 					AuthorizationHeader: &cloudtaskspb.HttpRequest_OidcToken{

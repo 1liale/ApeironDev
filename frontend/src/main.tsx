@@ -24,7 +24,7 @@ const queryClient = new QueryClient({
       // Don't refetch on reconnect by default
       refetchOnReconnect: false,
       // Retry failed requests only once
-      retry: 1,
+      retry: false,
     },
   },
 })
