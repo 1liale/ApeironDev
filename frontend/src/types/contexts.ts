@@ -46,6 +46,7 @@ export interface WorkspaceContextState {
   currentWorkspaceVersion: string | number | null;
   manifestAndVersionCache: Record<string, CachedManifestData>;
   fileContentCache: Record<string, Record<string, string | null>>;
+  chatMessages: ChatMessage[];
   isLoadingWorkspaces: boolean;
   isLoadingManifest: boolean;
   isLoadingWorkspaceContents: boolean;
@@ -67,7 +68,23 @@ export interface WorkspaceContextActions {
     newManifest: ClientSideWorkspaceFileManifestItem[],
   ) => void;
   refreshManifestOnly: (workspace: WorkspaceSummaryItem) => Promise<void>;
+  setChatMessages: (
+    newMessages:
+      | ChatMessage[]
+      | ((prev: ChatMessage[]) => ChatMessage[]),
+  ) => void;
 }
 
 export type WorkspaceContextType = WorkspaceContextState &
-  WorkspaceContextActions; 
+  WorkspaceContextActions;
+
+// --- Chat Messages ---
+
+export interface ChatMessage {
+  id: string;
+  content: string;
+  role: "user" | "assistant";
+  timestamp: Date;
+  isProcessing?: boolean;
+  jobId?: string;
+} 

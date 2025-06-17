@@ -7,24 +7,19 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useJobStatus } from '@/hooks/useJobStatus';
 import { ragQuery, type RagQueryRequestBody } from '@/lib/api';
 import { auth } from '@/lib/firebase';
-
-interface Message {
-  id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: Date;
-  isProcessing?: boolean;
-  jobId?: string;
-}
+import type { ChatMessage as Message } from '@/types/contexts';
 
 export const ChatPanel = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const {
+    selectedWorkspace,
+    chatMessages: messages,
+    setChatMessages,
+  } = useWorkspace();
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { isSignedIn } = useAuth();
-  const { selectedWorkspace } = useWorkspace();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -36,7 +31,7 @@ export const ChatPanel = () => {
 
   // Handle job completion
   const handleJobEnd = (output: string) => {
-    setMessages(prev => 
+    setChatMessages(prev => 
       prev.map(msg => 
         msg.jobId === currentJobId 
           ? { ...msg, content: output, isProcessing: false }
@@ -60,7 +55,7 @@ export const ChatPanel = () => {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setChatMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setIsProcessing(true);
 
@@ -88,7 +83,7 @@ export const ChatPanel = () => {
         jobId: jobId,
       };
 
-      setMessages(prev => [...prev, assistantMessage]);
+      setChatMessages(prev => [...prev, assistantMessage]);
       setCurrentJobId(jobId);
 
     } catch (error) {
@@ -101,7 +96,7 @@ export const ChatPanel = () => {
         timestamp: new Date(),
       };
 
-      setMessages(prev => [...prev, errorMessage]);
+      setChatMessages(prev => [...prev, errorMessage]);
       setIsProcessing(false);
     }
   };
@@ -128,7 +123,7 @@ export const ChatPanel = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
-            <Bot className="mx-auto h-12 w-12 mb-4 text-muted-foreground/50" />
+            <Bot className="mx-auto h-12 w-12 mb-4" />
             <p className="text-lg font-medium mb-2">AI Assistant</p>
             <p className="text-sm">
               Ask questions about your code, get explanations, or request help with your workspace.

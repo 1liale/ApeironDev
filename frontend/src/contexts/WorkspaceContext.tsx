@@ -20,6 +20,7 @@ import type {
   WorkspaceContextType,
   CachedWorkspaces,
   CachedManifestData,
+  ChatMessage,
 } from "@/types/contexts";
 import { toast } from "@/components/ui/sonner";
 import { auth } from "@/lib/firebase";
@@ -67,6 +68,41 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
   const [isLoadingWorkspaceContents, setIsLoadingWorkspaceContents] =
     useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+
+  // Chat messages cache keyed by workspaceId
+  const [chatMessagesCache, setChatMessagesCache] = useState<
+    Record<string, ChatMessage[]>
+  >({});
+
+  // Helper to get chat messages for currently selected workspace
+  const currentChatMessages: ChatMessage[] = selectedWorkspace
+    ? chatMessagesCache[selectedWorkspace.workspaceId] || []
+    : [];
+
+  // Setter that mirrors React.setState signature but scoped to current workspace
+  const setChatMessages = useCallback(
+    (
+      newMessagesOrUpdater:
+        | ChatMessage[]
+        | ((prev: ChatMessage[]) => ChatMessage[]),
+    ) => {
+      if (!selectedWorkspace) return;
+      setChatMessagesCache((prev) => {
+        const prevMessages = prev[selectedWorkspace.workspaceId] || [];
+        const newMessages =
+          typeof newMessagesOrUpdater === "function"
+            ? (newMessagesOrUpdater as (prev: ChatMessage[]) => ChatMessage[])(
+                prevMessages,
+              )
+            : newMessagesOrUpdater;
+        return {
+          ...prev,
+          [selectedWorkspace.workspaceId]: newMessages,
+        };
+      });
+    },
+    [selectedWorkspace],
+  );
 
   const updateCurrentWorkspaceManifest = useCallback(
     (newManifest: ClientSideWorkspaceFileManifestItem[]) => {
@@ -118,6 +154,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     setManifestAndVersionCache({});
     setLastManifestRefresh({});
     setFileContentCache({});
+    setChatMessagesCache({});
     setIsLoadingWorkspaces(false);
     setIsLoadingManifest(false);
     setIsLoadingWorkspaceContents(false);
@@ -406,8 +443,6 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     [isSignedIn, userId, user, fetchWorkspaces, handleSelectWorkspace],
   );
 
-
-
   const value: WorkspaceContextType = {
     workspaces,
     selectedWorkspace,
@@ -415,6 +450,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     currentWorkspaceVersion,
     manifestAndVersionCache,
     fileContentCache,
+    chatMessages: currentChatMessages,
     isLoadingWorkspaces,
     isLoadingManifest,
     isLoadingWorkspaceContents,
@@ -431,6 +467,7 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({
     removePathFromCache,
     updateCurrentWorkspaceManifest,
     refreshManifestOnly,
+    setChatMessages,
   };
 
   return (
