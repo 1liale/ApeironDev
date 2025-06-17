@@ -6,7 +6,7 @@ from typing import Dict, Any
 import google.generativeai as genai
 import lancedb
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from agent.graph import create_agent_graph
+from agent.graph import agent_graph
 from agent import dependencies
 from config import settings
 from fastapi import FastAPI, Request, HTTPException
@@ -101,9 +101,9 @@ async def lifespan(app: FastAPI):
         test_response = model.generate_content("Hello, this is a test.")
         logging.info(f"Gemini test successful: {test_response.text[:50]}...")
         
-        # Create agent graph
-        app.state.agent_graph = create_agent_graph()
-        logging.info("Agent graph created successfully")
+        # Set agent graph
+        app.state.agent_graph = agent_graph
+        logging.info("Agent graph loaded successfully")
         
     except Exception as e:
         logging.error(f"Failed to initialize services: {e}")
