@@ -5,6 +5,8 @@ import { Send, Bot, User, Loader2 } from 'lucide-react';
 import { useAuth } from '@clerk/react-router';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useJobStatus } from '@/hooks/useJobStatus';
+import { ragQuery, type RagQueryRequestBody } from '@/lib/api';
+import { auth } from '@/lib/firebase';
 
 interface Message {
   id: string;
@@ -21,7 +23,7 @@ export const ChatPanel = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { getToken } = useAuth();
+  const { isSignedIn } = useAuth();
   const { selectedWorkspace } = useWorkspace();
 
   const scrollToBottom = () => {
@@ -49,7 +51,7 @@ export const ChatPanel = () => {
   useJobStatus(currentJobId, handleJobEnd);
 
   const handleSend = async () => {
-    if (!inputValue.trim() || !selectedWorkspace) return;
+    if (!inputValue.trim() || !selectedWorkspace || !isSignedIn) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -63,29 +65,17 @@ export const ChatPanel = () => {
     setIsProcessing(true);
 
     try {
-      const token = await getToken();
+      const token = await auth.currentUser?.getIdToken();
       if (!token) {
         throw new Error('No authentication token available');
       }
 
-      const response = await fetch('/api/rag/query', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: userMessage.content,
-          workspaceId: selectedWorkspace.workspaceId,
-        }),
-      });
+      const queryRequest: RagQueryRequestBody = {
+        query: userMessage.content,
+        workspaceId: selectedWorkspace.workspaceId,
+      };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to send query');
-      }
-
-      const data = await response.json();
+      const data = await ragQuery(queryRequest, token);
       const jobId = data.job_id;
 
       // Add processing message

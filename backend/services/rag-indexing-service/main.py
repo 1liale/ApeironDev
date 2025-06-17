@@ -144,11 +144,13 @@ def get_embedding(text: str) -> List[float]:
 def download_file_from_r2(r2_object_key: str, file_path: str) -> str:
     """Download file content from R2."""
     try:
+        logger.info(f"Attempting to download file {file_path} with R2 key: {r2_object_key}")
         response = r2_client.get_object(Bucket=config.r2_bucket_name, Key=r2_object_key)
         content = response['Body'].read().decode('utf-8')
+        logger.info(f"Successfully downloaded file {file_path} ({len(content)} bytes)")
         return content
     except ClientError as e:
-        logger.error(f"Failed to download file {file_path} from R2: {e}")
+        logger.error(f"Failed to download file {file_path} from R2 with key '{r2_object_key}': {e}")
         raise
     except UnicodeDecodeError as e:
         logger.warning(f"Failed to decode file {file_path} as UTF-8, skipping: {e}")

@@ -525,6 +525,13 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 		modifiedFiles := make([]WorkerFile, 0)
 		for _, action := range req.SyncActions {
 			if action.Action == "upsert" && action.Type == "file" {
+				logCtx.WithFields(log.Fields{
+					"file_path": action.FilePath,
+					"r2_object_key": action.R2ObjectKey,
+					"action": action.Action,
+					"type": action.Type,
+				}).Info("Adding file for RAG indexing")
+				
 				modifiedFiles = append(modifiedFiles, WorkerFile{
 					R2ObjectKey: action.R2ObjectKey,
 					FilePath:    action.FilePath,
