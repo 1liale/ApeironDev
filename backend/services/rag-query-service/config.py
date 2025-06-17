@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str
 
     # Gemini Model Configuration
-    GEMINI_MODEL_NAME: str = "gemini-1.5-pro-preview-0409"
-    EMBEDDING_MODEL_NAME: str = "models/embedding-001"
+    GEMINI_MODEL_NAME: str = "gemini-1.5-pro"
+    EMBEDDING_MODEL_NAME: str = "models/text-embedding-004"
     EMBEDDING_MODEL_DIM: int = 768
 
     # LanceDB Configuration
