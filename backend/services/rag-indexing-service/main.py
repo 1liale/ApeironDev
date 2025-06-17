@@ -119,10 +119,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RAG Indexing Service", lifespan=lifespan)
 
+class WorkerFile(BaseModel):
+    r2_object_key: str
+    file_path: str
+
 class RagIndexingRequest(BaseModel):
     job_id: str
     workspace_id: str
-    file_paths: List[str]
+    files: List[WorkerFile]
 
 def get_embedding(text: str) -> List[float]:
     """Generate embedding for text using Google Generative AI."""
@@ -137,33 +141,34 @@ def get_embedding(text: str) -> List[float]:
         logger.error(f"Failed to generate embedding: {e}")
         raise
 
-def download_file_from_r2(workspace_id: str, file_path: str) -> str:
+def download_file_from_r2(r2_object_key: str, file_path: str) -> str:
     """Download file content from R2."""
     try:
-        object_key = f"{workspace_id}/{file_path}"
-        response = r2_client.get_object(Bucket=config.r2_bucket_name, Key=object_key)
+        logger.info(f"Attempting to download file {file_path} with R2 key: {r2_object_key}")
+        response = r2_client.get_object(Bucket=config.r2_bucket_name, Key=r2_object_key)
         content = response['Body'].read().decode('utf-8')
+        logger.info(f"Successfully downloaded file {file_path} ({len(content)} bytes)")
         return content
     except ClientError as e:
-        logger.error(f"Failed to download file {file_path} from R2: {e}")
+        logger.error(f"Failed to download file {file_path} from R2 with key '{r2_object_key}': {e}")
         raise
     except UnicodeDecodeError as e:
         logger.warning(f"Failed to decode file {file_path} as UTF-8, skipping: {e}")
         return ""
 
-def index_files(workspace_id: str, file_paths: List[str]) -> Dict[str, Any]:
+def index_files(workspace_id: str, files: List[WorkerFile]) -> Dict[str, Any]:
     """Index files in the vector database."""
     indexed_count = 0
     skipped_count = 0
     errors = []
     
-    for file_path in file_paths:
+    for file_info in files:
         try:
-            # Download file content
-            content = download_file_from_r2(workspace_id, file_path)
+            # Download file content using the R2 object key
+            content = download_file_from_r2(file_info.r2_object_key, file_info.file_path)
             
             if not content.strip():
-                logger.warning(f"Skipping empty file: {file_path}")
+                logger.warning(f"Skipping empty file: {file_info.file_path}")
                 skipped_count += 1
                 continue
             
@@ -172,13 +177,13 @@ def index_files(workspace_id: str, file_paths: List[str]) -> Dict[str, Any]:
             
             # Delete existing records for this file
             try:
-                lance_table.delete(f"workspace_id = '{workspace_id}' AND file_path = '{file_path}'")
+                lance_table.delete(f"workspace_id = '{workspace_id}' AND file_path = '{file_info.file_path}'")
             except Exception as e:
-                logger.warning(f"No existing records to delete for {file_path}: {e}")
+                logger.warning(f"No existing records to delete for {file_info.file_path}: {e}")
             
             # Insert new record
             data = [{
-                "file_path": file_path,
+                "file_path": file_info.file_path,
                 "content": content,
                 "workspace_id": workspace_id,
                 "vector": embedding
@@ -186,10 +191,10 @@ def index_files(workspace_id: str, file_paths: List[str]) -> Dict[str, Any]:
             lance_table.add(data)
             
             indexed_count += 1
-            logger.info(f"Successfully indexed file: {file_path}")
+            logger.info(f"Successfully indexed file: {file_info.file_path}")
             
         except Exception as e:
-            error_msg = f"Failed to index file {file_path}: {str(e)}"
+            error_msg = f"Failed to index file {file_info.file_path}: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
     
@@ -206,7 +211,7 @@ async def handle_indexing_task(request: RagIndexingRequest):
     logger.info(f"Processing RAG indexing task for job {request.job_id}, workspace {request.workspace_id}")
     
     try:
-        result = index_files(request.workspace_id, request.file_paths)
+        result = index_files(request.workspace_id, request.files)
         
         logger.info(f"RAG indexing completed for job {request.job_id}: {result}")
         

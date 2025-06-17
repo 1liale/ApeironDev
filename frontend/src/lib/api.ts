@@ -25,6 +25,17 @@ import type {
   ExecuteCodeAuthResponse,
 } from "@/types/api";
 
+// RAG Query types
+export interface RagQueryRequestBody {
+  query: string;
+  workspaceId: string;
+}
+
+export interface RagQueryResponse {
+  message: string;
+  job_id: string;
+}
+
 // ===== BASIC API CALLS =====
 
 export async function executeCode(
@@ -342,4 +353,29 @@ export async function executeCodeAuth(
 
   // Execute code
   return executeCodeAuthCore(workspaceId, authToken, executionDetails);
+}
+
+export async function ragQuery(
+  body: RagQueryRequestBody,
+  authToken: string
+): Promise<RagQueryResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/rag/query`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorData = await response
+      .json()
+      .catch(() => ({ message: "Failed to send RAG query and parse error" }));
+    console.error("RAG Query API Error:", response.status, errorData);
+    throw new Error(
+      errorData.error || `HTTP error! status: ${response.status}`
+    );
+  }
+  return (await response.json()) as RagQueryResponse;
 }

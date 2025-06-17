@@ -522,10 +522,20 @@ func (ac *ApiController) ConfirmSync(c *gin.Context) {
 
 	// Trigger RAG indexing for modified files (fire and forget)
 	go func() {
-		modifiedFiles := make([]string, 0)
+		modifiedFiles := make([]WorkerFile, 0)
 		for _, action := range req.SyncActions {
 			if action.Action == "upsert" && action.Type == "file" {
-				modifiedFiles = append(modifiedFiles, action.FilePath)
+				logCtx.WithFields(log.Fields{
+					"file_path": action.FilePath,
+					"r2_object_key": action.R2ObjectKey,
+					"action": action.Action,
+					"type": action.Type,
+				}).Info("Adding file for RAG indexing")
+				
+				modifiedFiles = append(modifiedFiles, WorkerFile{
+					R2ObjectKey: action.R2ObjectKey,
+					FilePath:    action.FilePath,
+				})
 			}
 		}
 
@@ -1082,11 +1092,11 @@ func (ac *ApiController) enqueueRagQuery(jobID, userID, workspaceID, query strin
 }
 
 // enqueueRagIndexing enqueues a RAG indexing task
-func (ac *ApiController) enqueueRagIndexing(jobID, workspaceID string, files []string) error {
+func (ac *ApiController) enqueueRagIndexing(jobID, workspaceID string, files []WorkerFile) error {
 	payload := RagIndexingPayload{
 		JobID:       jobID,
 		WorkspaceID: workspaceID,
-		FilePaths:   files,
+		Files:       files,
 	}
 
 	queuePath := ac.AppConfig.GetQueuePath(ac.Services.RagIndexing.QueueID)
