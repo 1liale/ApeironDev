@@ -207,7 +207,7 @@ type RagQueryPayload struct {
 type RagIndexingPayload struct {
 	JobID       string   `json:"job_id"`
 	WorkspaceID string   `json:"workspace_id"`
-	Files       []string `json:"files"`
+	FilePaths   []string `json:"file_paths"`
 }
 
 // RAG Query request from frontend

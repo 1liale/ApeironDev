@@ -1086,7 +1086,7 @@ func (ac *ApiController) enqueueRagIndexing(jobID, workspaceID string, files []s
 	payload := RagIndexingPayload{
 		JobID:       jobID,
 		WorkspaceID: workspaceID,
-		Files:       files,
+		FilePaths:   files,
 	}
 
 	queuePath := ac.AppConfig.GetQueuePath(ac.Services.RagIndexing.QueueID)
