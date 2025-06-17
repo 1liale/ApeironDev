@@ -205,9 +205,9 @@ type RagQueryPayload struct {
 
 // RAG Indexing payload for Cloud Tasks
 type RagIndexingPayload struct {
-	JobID       string   `json:"job_id"`
-	WorkspaceID string   `json:"workspace_id"`
-	FilePaths   []string `json:"file_paths"`
+	JobID       string       `json:"job_id"`
+	WorkspaceID string       `json:"workspace_id"`
+	Files       []WorkerFile `json:"files"`
 }
 
 // RAG Query request from frontend
