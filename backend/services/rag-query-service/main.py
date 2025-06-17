@@ -49,6 +49,21 @@ async def lifespan(app: FastAPI):
     """
     # Startup: Initialize Firestore, LanceDB, and Gemini
     try:
+        # Validate required environment variables
+        required_vars = {
+            "GCP_PROJECT_ID": settings.GCP_PROJECT_ID,
+            "GOOGLE_API_KEY": settings.GOOGLE_API_KEY,
+            "COHERE_API_KEY": settings.COHERE_API_KEY,
+            "R2_ACCESS_KEY_ID": settings.R2_ACCESS_KEY_ID,
+            "R2_SECRET_ACCESS_KEY": settings.R2_SECRET_ACCESS_KEY,
+            "R2_ACCOUNT_ID": settings.R2_ACCOUNT_ID,
+            "R2_BUCKET_NAME": settings.R2_BUCKET_NAME,
+        }
+        
+        missing_vars = [var for var, value in required_vars.items() if not value]
+        if missing_vars:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        
         # Initialize Firestore client
         init_firestore_client()
         
