@@ -71,18 +71,14 @@ async def lifespan(app: FastAPI):
         genai.configure(api_key=settings.GOOGLE_API_KEY)
         logging.info("Google Generative AI configured successfully")
         
-        # Initialize LanceDB connection
-        storage_options = {
-            "aws_access_key_id": settings.R2_ACCESS_KEY_ID,
-            "aws_secret_access_key": settings.R2_SECRET_ACCESS_KEY,
-            "endpoint": settings.R2_ENDPOINT_URL,
-            "region": "auto",
-        }
+        # Set environment variables for LanceDB S3-compatible storage
+        os.environ["AWS_ACCESS_KEY_ID"] = settings.R2_ACCESS_KEY_ID
+        os.environ["AWS_SECRET_ACCESS_KEY"] = settings.R2_SECRET_ACCESS_KEY
+        os.environ["AWS_ENDPOINT"] = settings.R2_ENDPOINT_URL
+        os.environ["AWS_DEFAULT_REGION"] = "auto"
         
-        db_connection = lancedb.connect(
-            settings.LANCEDB_URI,
-            storage_options=storage_options
-        )
+        # Initialize LanceDB connection
+        db_connection = lancedb.connect(settings.LANCEDB_URI)
         
         # Initialize embedding model
         embedding_model = GoogleGenerativeAIEmbeddings(
