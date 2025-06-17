@@ -123,7 +123,7 @@ export const ChatPanel = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
-            <Bot className="mx-auto h-12 w-12 mb-4 text-muted-foreground/50" />
+            <Bot className="mx-auto h-12 w-12 mb-4" />
             <p className="text-lg font-medium mb-2">AI Assistant</p>
             <p className="text-sm">
               Ask questions about your code, get explanations, or request help with your workspace.
