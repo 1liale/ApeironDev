@@ -38,10 +38,6 @@ resource "google_cloud_run_service" "rag_indexing_service" {
           value = var.lancedb_table_name
         }
         env {
-          name  = "COLLECTION_ID_JOBS"
-          value = var.firestore_jobs_collection
-        }
-        env {
           name = "R2_ACCESS_KEY_ID"
           value_from {
             secret_key_ref {

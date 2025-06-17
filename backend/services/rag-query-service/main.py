@@ -1,12 +1,12 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+import uvicorn
 
 import google.generativeai as genai
 import lancedb
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from agent.graph import create_agent_graph
+from agent.graph import agent_graph
 from agent import dependencies
 from config import settings
 from fastapi import FastAPI, Request, HTTPException
@@ -49,6 +49,21 @@ async def lifespan(app: FastAPI):
     """
     # Startup: Initialize Firestore, LanceDB, and Gemini
     try:
+        # Validate required environment variables
+        required_vars = {
+            "GCP_PROJECT_ID": settings.GCP_PROJECT_ID,
+            "GOOGLE_API_KEY": settings.GOOGLE_API_KEY,
+            "COHERE_API_KEY": settings.COHERE_API_KEY,
+            "R2_ACCESS_KEY_ID": settings.R2_ACCESS_KEY_ID,
+            "R2_SECRET_ACCESS_KEY": settings.R2_SECRET_ACCESS_KEY,
+            "R2_ACCOUNT_ID": settings.R2_ACCOUNT_ID,
+            "R2_BUCKET_NAME": settings.R2_BUCKET_NAME,
+        }
+        
+        missing_vars = [var for var, value in required_vars.items() if not value]
+        if missing_vars:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        
         # Initialize Firestore client
         init_firestore_client()
         
@@ -86,9 +101,9 @@ async def lifespan(app: FastAPI):
         test_response = model.generate_content("Hello, this is a test.")
         logging.info(f"Gemini test successful: {test_response.text[:50]}...")
         
-        # Create agent graph
-        app.state.agent_graph = create_agent_graph()
-        logging.info("Agent graph created successfully")
+        # Set agent graph
+        app.state.agent_graph = agent_graph
+        logging.info("Agent graph loaded successfully")
         
     except Exception as e:
         logging.error(f"Failed to initialize services: {e}")
@@ -199,6 +214,5 @@ async def handle_cloud_task(request: Request):
         raise HTTPException(status_code=500, detail=f"Task processing failed: {str(e)}")
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port) 
