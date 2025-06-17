@@ -176,14 +176,6 @@ resource "google_project_iam_member" "rag_indexing_sa_aiplatform_user" {
   member  = "serviceAccount:${google_service_account.rag_indexing_sa.email}"
 }
 
-# rag-indexing-service needs to write to Firestore (job output and status updates)
-resource "google_project_iam_member" "rag_indexing_service_datastore_user" {
-  provider = google
-  project  = var.gcp_project_id
-  role     = "roles/datastore.user"
-  member   = "serviceAccount:${google_service_account.rag_indexing_sa.email}"
-}
-
 # --- RAG Query Service (rag_query_sa) Permissions ---
 
 # Allow RAG query service to access Vertex AI embedding models

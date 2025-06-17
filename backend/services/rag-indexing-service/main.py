@@ -1,287 +1,232 @@
+import json
 import logging
 import os
+from typing import List, Dict, Any
 from contextlib import asynccontextmanager
-from typing import List
 
-import google.generativeai as genai
-import lancedb
-from config import settings
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel, Field
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from lancedb.pydantic import LanceModel, Vector
-from google.cloud import firestore as google_firestore
 import boto3
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import lancedb
+import google.generativeai as genai
+from botocore.exceptions import ClientError
 
-# Environment Variables
-COLLECTION_ID_JOBS = os.getenv("COLLECTION_ID_JOBS", "jobs")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Global Firestore client
-firestore_client: google_firestore.Client | None = None
+# Configuration with defaults
+class Config:
+    gcp_project_id: str = ""
+    gcp_region: str = ""
+    lancedb_table_name: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_account_id: str = ""
+    r2_bucket_name: str = ""
+    google_api_key: str = ""
 
-def get_firestore_client() -> google_firestore.Client | None:
-    return firestore_client
+config = Config()
 
-def init_firestore_client():
-    global firestore_client
+# Global clients
+r2_client = None
+lance_db = None
+lance_table = None
+
+def load_config():
+    """Load configuration from environment variables."""
+    config.gcp_project_id = os.getenv("GCP_PROJECT_ID", "")
+    config.gcp_region = os.getenv("GCP_REGION", "")
+    config.lancedb_table_name = os.getenv("LANCEDB_TABLE_NAME", "")
+    config.r2_access_key_id = os.getenv("R2_ACCESS_KEY_ID", "")
+    config.r2_secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY", "")
+    config.r2_account_id = os.getenv("R2_ACCOUNT_ID", "")
+    config.r2_bucket_name = os.getenv("R2_BUCKET_NAME", "")
+    config.google_api_key = os.getenv("GOOGLE_API_KEY", "")
+
+def validate_config():
+    """Validate that all required configuration is present."""
+    required_vars = [
+        ("GCP_PROJECT_ID", config.gcp_project_id),
+        ("GCP_REGION", config.gcp_region),
+        ("LANCEDB_TABLE_NAME", config.lancedb_table_name),
+        ("R2_ACCESS_KEY_ID", config.r2_access_key_id),
+        ("R2_SECRET_ACCESS_KEY", config.r2_secret_access_key),
+        ("R2_ACCOUNT_ID", config.r2_account_id),
+        ("R2_BUCKET_NAME", config.r2_bucket_name),
+        ("GOOGLE_API_KEY", config.google_api_key),
+    ]
     
-    if settings.GCP_PROJECT_ID:
-        try:
-            firestore_client = google_firestore.Client(project=settings.GCP_PROJECT_ID)
-            logging.info("Firestore client initialized.")
-        except Exception as e:
-            logging.error(f"Failed to initialize Firestore client: {e}")
-            firestore_client = None
-    else:
-        logging.error("GCP_PROJECT_ID environment variable not set. Firestore client NOT initialized.")
-        firestore_client = None
+    missing_vars = [name for name, value in required_vars if not value]
+    if missing_vars:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-class CloudTaskIndexPayload(BaseModel):
-    """Cloud Tasks payload for indexing."""
-    job_id: str
-    workspace_id: str
-    files: List[str]
+def init_r2_client():
+    """Initialize R2 client."""
+    global r2_client
+    r2_client = boto3.client(
+        's3',
+        endpoint_url=f'https://{config.r2_account_id}.r2.cloudflarestorage.com',
+        aws_access_key_id=config.r2_access_key_id,
+        aws_secret_access_key=config.r2_secret_access_key,
+        region_name='auto'
+    )
+    logger.info("R2 client initialized")
 
-class CodeSnippet(LanceModel):
-    """Pydantic model for the data we'll store in LanceDB."""
-    vector: Vector(settings.EMBEDDING_MODEL_DIM)
-    text: str
-    file_path: str
-    workspace_id: str
+def init_lancedb():
+    """Initialize LanceDB."""
+    global lance_db, lance_table
+    lance_db = lancedb.connect("/tmp/lancedb")
+    
+    # Create table if it doesn't exist
+    try:
+        lance_table = lance_db.open_table(config.lancedb_table_name)
+        logger.info(f"Opened existing LanceDB table: {config.lancedb_table_name}")
+    except FileNotFoundError:
+        # Create table with schema
+        import pyarrow as pa
+        schema = pa.schema([
+            pa.field("file_path", pa.string()),
+            pa.field("content", pa.string()),
+            pa.field("workspace_id", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 768))  # Gemini embedding dimension
+        ])
+        lance_table = lance_db.create_table(config.lancedb_table_name, schema=schema)
+        logger.info(f"Created new LanceDB table: {config.lancedb_table_name}")
+
+def init_genai():
+    """Initialize Google Generative AI."""
+    genai.configure(api_key=config.google_api_key)
+    logger.info("Google Generative AI initialized")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handle application startup and shutdown events.
-    """
-    # Startup: Connect to LanceDB and initialize dependencies
-    logging.info("Connecting to LanceDB and initializing resources...")
+    """FastAPI lifespan context manager."""
+    logger.info("Starting RAG Indexing Service...")
     
+    # Load and validate configuration
+    load_config()
+    validate_config()
+    
+    # Initialize clients
+    init_r2_client()
+    init_lancedb()
+    init_genai()
+    
+    logger.info("RAG Indexing Service startup complete")
+    yield
+    logger.info("RAG Indexing Service shutting down...")
+
+app = FastAPI(title="RAG Indexing Service", lifespan=lifespan)
+
+class RagIndexingRequest(BaseModel):
+    job_id: str
+    workspace_id: str
+    file_paths: List[str]
+
+def get_embedding(text: str) -> List[float]:
+    """Generate embedding for text using Google Generative AI."""
     try:
-        # Validate required environment variables
-        required_vars = {
-            "GCP_PROJECT_ID": settings.GCP_PROJECT_ID,
-            "GOOGLE_API_KEY": settings.GOOGLE_API_KEY,
-            "R2_ACCESS_KEY_ID": settings.R2_ACCESS_KEY_ID,
-            "R2_SECRET_ACCESS_KEY": settings.R2_SECRET_ACCESS_KEY,
-            "R2_ACCOUNT_ID": settings.R2_ACCOUNT_ID,
-            "R2_BUCKET_NAME": settings.R2_BUCKET_NAME,
-        }
-        
-        missing_vars = [var for var, value in required_vars.items() if not value]
-        if missing_vars:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-        
-        # Initialize Firestore client
-        init_firestore_client()
-        
-        # Configure Google Generative AI
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        
-        # Initialize R2/S3 client
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=settings.R2_ENDPOINT_URL,
-            aws_access_key_id=settings.R2_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-            region_name='auto'
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text,
+            task_type="retrieval_document"
         )
-        
-        # Connect to LanceDB
-        storage_options = {
-            "aws_access_key_id": settings.R2_ACCESS_KEY_ID,
-            "aws_secret_access_key": settings.R2_SECRET_ACCESS_KEY,
-            "aws_endpoint_url": settings.R2_ENDPOINT_URL,
-            "aws_region": "auto",
-        }
-        
-        db_connection = lancedb.connect(
-            settings.LANCEDB_URI,
-            storage_options=storage_options
-        )
-        
-        # Initialize embedding model
-        embedding_model = GoogleGenerativeAIEmbeddings(
-            model=settings.EMBEDDING_MODEL_NAME,
-            google_api_key=settings.GOOGLE_API_KEY
-        )
-        
-        # Store in app state
-        app.state.db_connection = db_connection
-        app.state.embedding_model = embedding_model
-        app.state.s3_client = s3_client
-        
-        logging.info(f"Successfully connected to LanceDB. Available tables: {db_connection.table_names()}")
-        
+        return result['embedding']
     except Exception as e:
-        logging.error(f"Failed to initialize services: {e}")
+        logger.error(f"Failed to generate embedding: {e}")
         raise
-    
-    yield  # App runs here
-    
-    # Shutdown
-    logging.info("RAG Indexing Service shutting down.")
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="RAG Indexing Service",
-    description="Service to index workspace files for RAG queries",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-@google_firestore.transactional
-def _update_job_in_transaction(transaction: google_firestore.Transaction, job_ref: google_firestore.DocumentReference, update_data: dict):
-    transaction.update(job_ref, update_data)
-
-async def update_job_status(job_id: str, status: str, output: str = None, error: str = None):
-    """Update job status in Firestore"""
-    firestore_client = get_firestore_client()
-    if not firestore_client:
-        logging.error(f"Job {job_id}: Firestore client not available for status update.")
-        raise RuntimeError("Firestore client not available.")
-    
+def download_file_from_r2(workspace_id: str, file_path: str) -> str:
+    """Download file content from R2."""
     try:
-        job_ref = firestore_client.collection(COLLECTION_ID_JOBS).document(job_id)
-        update_data = {'status': status}
-        
-        if output is not None:
-            update_data['output'] = output
-        if error is not None:
-            update_data['error'] = error
-            
-        transaction = firestore_client.transaction()
-        _update_job_in_transaction(transaction, job_ref, update_data)
-        logging.info(f"Updated job {job_id} status to {status}")
-    except Exception as e:
-        logging.error(f"Failed to update job {job_id} status: {e}")
-        raise RuntimeError(f"Firestore update failed for job {job_id}") from e
+        object_key = f"{workspace_id}/{file_path}"
+        response = r2_client.get_object(Bucket=config.r2_bucket_name, Key=object_key)
+        content = response['Body'].read().decode('utf-8')
+        return content
+    except ClientError as e:
+        logger.error(f"Failed to download file {file_path} from R2: {e}")
+        raise
+    except UnicodeDecodeError as e:
+        logger.warning(f"Failed to decode file {file_path} as UTF-8, skipping: {e}")
+        return ""
 
-async def process_files_for_indexing(workspace_id: str, file_paths: List[str], app_state):
-    """Process files and add them to the vector database"""
-    db_connection = app_state.db_connection
-    embedding_model = app_state.embedding_model
-    s3_client = app_state.s3_client
-    
-    # Ensure table exists
-    table_name = settings.LANCEDB_TABLE_NAME
-    if table_name not in db_connection.table_names():
-        # Create table with schema
-        db_connection.create_table(table_name, schema=CodeSnippet)
-        logging.info(f"Created new table: {table_name}")
-    
-    table = db_connection.open_table(table_name)
-    
-    indexed_files = []
+def index_files(workspace_id: str, file_paths: List[str]) -> Dict[str, Any]:
+    """Index files in the vector database."""
+    indexed_count = 0
+    skipped_count = 0
+    errors = []
     
     for file_path in file_paths:
         try:
-            # Skip non-code files
-            if not any(file_path.endswith(ext) for ext in ['.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.java', '.cpp', '.c', '.rs', '.rb', '.php']):
-                logging.info(f"Skipping non-code file: {file_path}")
-                continue
-                
-            # Construct R2 object key (this should match your workspace file structure)
-            object_key = f"workspaces/{workspace_id}/files/{file_path}"
+            # Download file content
+            content = download_file_from_r2(workspace_id, file_path)
             
-            # Download file content from R2
+            if not content.strip():
+                logger.warning(f"Skipping empty file: {file_path}")
+                skipped_count += 1
+                continue
+            
+            # Generate embedding
+            embedding = get_embedding(content)
+            
+            # Delete existing records for this file
             try:
-                response = s3_client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=object_key)
-                file_content = response['Body'].read().decode('utf-8')
+                lance_table.delete(f"workspace_id = '{workspace_id}' AND file_path = '{file_path}'")
             except Exception as e:
-                logging.warning(f"Could not download file {file_path}: {e}")
-                continue
+                logger.warning(f"No existing records to delete for {file_path}: {e}")
             
-            # Skip empty files
-            if not file_content.strip():
-                continue
-                
-            # Generate embeddings for the file content
-            embeddings = embedding_model.embed_documents([file_content])
+            # Insert new record
+            data = [{
+                "file_path": file_path,
+                "content": content,
+                "workspace_id": workspace_id,
+                "vector": embedding
+            }]
+            lance_table.add(data)
             
-            # Create code snippet record
-            code_snippet = CodeSnippet(
-                vector=embeddings[0],
-                text=file_content,
-                file_path=file_path,
-                workspace_id=workspace_id
-            )
-            
-            # First, delete existing records for this file
-            table.delete(f"file_path = '{file_path}' AND workspace_id = '{workspace_id}'")
-            
-            # Add new record
-            table.add([code_snippet])
-            
-            indexed_files.append(file_path)
-            logging.info(f"Successfully indexed file: {file_path}")
+            indexed_count += 1
+            logger.info(f"Successfully indexed file: {file_path}")
             
         except Exception as e:
-            logging.error(f"Error processing file {file_path}: {e}")
-            continue
+            error_msg = f"Failed to index file {file_path}: {str(e)}"
+            logger.error(error_msg)
+            errors.append(error_msg)
     
-    return indexed_files
-
-@app.get("/")
-def read_root():
-    """Health check endpoint"""
     return {
-        "message": "RAG Indexing Service is running",
-        "version": "1.0.0",
-        "status": "healthy"
+        "indexed_count": indexed_count,
+        "skipped_count": skipped_count,
+        "error_count": len(errors),
+        "errors": errors
     }
 
 @app.post("/")
-async def handle_cloud_task(request: Request):
-    """
-    Handle Cloud Tasks payload for async RAG indexing.
-    """
+async def handle_indexing_task(request: RagIndexingRequest):
+    """Handle RAG indexing task from Cloud Tasks."""
+    logger.info(f"Processing RAG indexing task for job {request.job_id}, workspace {request.workspace_id}")
+    
     try:
-        payload_data = await request.json()
-        payload = CloudTaskIndexPayload(**payload_data)
+        result = index_files(request.workspace_id, request.file_paths)
         
-        logging.info(f"Processing Cloud Task indexing for job {payload.job_id}")
-        
-        # Ensure Firestore client is available
-        if not get_firestore_client():
-            raise HTTPException(status_code=503, detail="Firestore client not available.")
-        
-        # Update job status to processing
-        await update_job_status(payload.job_id, "processing")
-        
-        # Process files for indexing
-        indexed_files = await process_files_for_indexing(
-            payload.workspace_id,
-            payload.files,
-            request.app.state
-        )
-        
-        # Update job status to completed
-        result_message = f"Successfully indexed {len(indexed_files)} files for workspace {payload.workspace_id}"
-        await update_job_status(payload.job_id, "completed", output=result_message)
-        
-        logging.info(f"Successfully processed indexing for job {payload.job_id}")
+        logger.info(f"RAG indexing completed for job {request.job_id}: {result}")
         
         return {
-            "status": "success", 
-            "job_id": payload.job_id,
-            "indexed_files": len(indexed_files)
+            "success": True,
+            "job_id": request.job_id,
+            "result": result
         }
         
     except Exception as e:
-        logging.error(f"Cloud Task indexing error: {e}")
+        error_msg = f"RAG indexing failed for job {request.job_id}: {str(e)}"
+        logger.error(error_msg)
         
-        # Try to update job status to failed
-        try:
-            payload_data = await request.json()
-            payload = CloudTaskIndexPayload(**payload_data)
-            await update_job_status(payload.job_id, "failed", error=str(e))
-        except:
-            pass  # If we can't even parse the payload, log and continue
-            
-        raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port) 
+    uvicorn.run(app, host="0.0.0.0", port=8080) 
