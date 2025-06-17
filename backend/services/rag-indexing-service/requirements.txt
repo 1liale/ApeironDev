@@ -1,11 +1,16 @@
-# Google Cloud Functions framework
-functions-framework
+# Core web framework
+fastapi
+uvicorn[standard]
+
+# Database
+google-cloud-firestore
 
 # For connecting to LanceDB on R2
 lancedb
 pyarrow
 
 # For Generative AI embeddings
+google-generativeai
 langchain-google-genai
 
 # For environment variable and settings management

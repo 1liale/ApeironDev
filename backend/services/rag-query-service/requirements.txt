@@ -2,6 +2,9 @@
 fastapi
 uvicorn[standard]
 
+# Database
+google-cloud-firestore
+
 # For connecting to LanceDB on R2
 lancedb
 pyarrow
@@ -11,6 +14,7 @@ pydantic-settings
 pydantic
 
 # For Generative AI and LangChain
+google-generativeai
 langchain
 langchain-google-genai
 langgraph

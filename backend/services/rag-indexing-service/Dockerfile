@@ -43,8 +43,8 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages
 
-# Expose the port the app runs on (though it's not strictly necessary for a non-HTTP triggered service, it's good practice)
+# Expose the port the app runs on
 EXPOSE 8080
 
-# The Functions Framework will start a server for us
-CMD exec functions-framework --target=index_workspace_handler --port=8080
+# Define the command to run the FastAPI application
+CMD exec uvicorn main:app --host 0.0.0.0 --port 8080

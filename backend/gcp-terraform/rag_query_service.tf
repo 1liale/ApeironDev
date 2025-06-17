@@ -39,6 +39,10 @@ resource "google_cloud_run_service" "rag_query_service" {
           name  = "LANCEDB_TABLE_NAME"
           value = var.lancedb_table_name
         }
+        env {
+          name  = "COLLECTION_ID_JOBS"
+          value = var.firestore_jobs_collection
+        }
 
         # Mount secrets as environment variables
         env {

@@ -1,69 +1,119 @@
-import { Send, Brain, User } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import React, { useState, useRef, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { useAuth } from '@clerk/react-router';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useJobStatus } from '@/hooks/useJobStatus';
 
 interface Message {
   id: string;
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
+  isProcessing?: boolean;
+  jobId?: string;
 }
 
 export const ChatPanel = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      content: 'Hello! I\'m your AI coding assistant. How can I help you with your code today?',
-      role: 'assistant',
-      timestamp: new Date()
-    },
-    {
-      id: '2',
-      content: 'THIS FEATURE IS IN DEVELOPMENT! AVAILABLE SOON!',
-      role: 'assistant',
-      timestamp: new Date()
-    }
-  ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { getToken } = useAuth();
+  const { selectedWorkspace } = useWorkspace();
 
   const scrollToBottom = () => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
+  // Handle job completion
+  const handleJobEnd = (output: string) => {
+    setMessages(prev => 
+      prev.map(msg => 
+        msg.jobId === currentJobId 
+          ? { ...msg, content: output, isProcessing: false }
+          : msg
+      )
+    );
+    setIsProcessing(false);
+    setCurrentJobId(null);
+  };
+
+  // Use job status polling hook
+  useJobStatus(currentJobId, handleJobEnd);
+
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!inputValue.trim() || !selectedWorkspace) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      content: input,
+      content: inputValue.trim(),
       role: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     setMessages(prev => [...prev, userMessage]);
-    setInput('');
-    setIsLoading(true);
+    setInputValue('');
+    setIsProcessing(true);
 
-    // Simulate AI response - replace this with Vertex AI integration later
-    setTimeout(() => {
-      const aiMessage: Message = {
+    try {
+      const token = await getToken();
+      if (!token) {
+        throw new Error('No authentication token available');
+      }
+
+      const response = await fetch('/api/rag/query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: userMessage.content,
+          workspaceId: selectedWorkspace.workspaceId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to send query');
+      }
+
+      const data = await response.json();
+      const jobId = data.job_id;
+
+      // Add processing message
+      const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: 'I understand your request. Once you integrate Vertex AI, I\'ll be able to provide more helpful responses about your code.',
+        content: 'Thinking...',
         role: 'assistant',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isProcessing: true,
+        jobId: jobId,
       };
-      setMessages(prev => [...prev, aiMessage]);
-      setIsLoading(false);
-    }, 1000);
+
+      setMessages(prev => [...prev, assistantMessage]);
+      setCurrentJobId(jobId);
+
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: error instanceof Error ? error.message : 'Sorry, there was an error processing your request.',
+        role: 'assistant',
+        timestamp: new Date(),
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
+      setIsProcessing(false);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -73,82 +123,106 @@ export const ChatPanel = () => {
     }
   };
 
+  const formatContent = (content: string) => {
+    // Simple formatting for code blocks and line breaks
+    return content.split('\n').map((line, index) => (
+      <span key={index}>
+        {line}
+        {index < content.split('\n').length - 1 && <br />}
+      </span>
+    ));
+  };
+
   return (
-    <div className="h-full w-full flex flex-col bg-background overflow-hidden">
-      <div 
-        ref={messagesContainerRef} 
-        className="flex-1 overflow-y-auto overflow-x-hidden"
-      > 
-        <div className="p-4 space-y-4">
-          {messages.map((message) => (
+    <div className="flex flex-col h-full bg-background">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.length === 0 ? (
+          <div className="text-center text-muted-foreground py-8">
+            <Bot className="mx-auto h-12 w-12 mb-4 text-muted-foreground/50" />
+            <p className="text-lg font-medium mb-2">AI Assistant</p>
+            <p className="text-sm">
+              Ask questions about your code, get explanations, or request help with your workspace.
+            </p>
+            {!selectedWorkspace && (
+              <p className="text-sm text-yellow-600 mt-2">
+                Select a workspace to enable AI assistance with your codebase.
+              </p>
+            )}
+          </div>
+        ) : (
+          messages.map((message) => (
             <div
               key={message.id}
-              className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {message.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0 mt-1">
-                  <Brain className="w-3.5 h-3.5 text-primary-foreground" />
-                </div>
-              )}
               <div
-                className={`max-w-[80%] rounded-lg px-3 py-2 ${
+                className={`max-w-[80%] rounded-lg px-4 py-2 ${
                   message.role === 'user'
                     ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground'
+                    : 'bg-muted'
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
-                <span className="text-xs text-muted-foreground opacity-70 mt-1 block">
-                  {message.timestamp.toLocaleTimeString()}
-                </span>
-              </div>
-              {message.role === 'user' && (
-                <div className="w-7 h-7 rounded-full bg-accent-foreground flex items-center justify-center flex-shrink-0 mt-1">
-                  <User className="w-3.5 h-3.5 text-accent" />
+                <div className="flex items-start gap-2">
+                  {message.role === 'assistant' && (
+                    <Bot className="h-4 w-4 mt-1 flex-shrink-0" />
+                  )}
+                  {message.role === 'user' && (
+                    <User className="h-4 w-4 mt-1 flex-shrink-0" />
+                  )}
+                  <div className="flex-1">
+                    <div className="text-sm">
+                      {message.isProcessing ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>{message.content}</span>
+                        </div>
+                      ) : (
+                        formatContent(message.content)
+                      )}
+                    </div>
+                    <div className="text-xs opacity-70 mt-1">
+                      {message.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex gap-3 justify-start">
-              <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0 mt-1">
-                <Brain className="w-3.5 h-3.5 text-primary-foreground" />
-              </div>
-              <div className="bg-muted text-muted-foreground rounded-lg px-3 py-2">
-                <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                  <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                </div>
               </div>
             </div>
-          )}
-        </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
       </div>
-      
-      <div className="border-t border-border p-3 bg-background w-full flex-shrink-0">
-        <div className="flex items-end gap-2 bg-muted rounded-lg border border-border p-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyPress}
-            placeholder="Ask about your code..."
-            className="flex-1 bg-transparent border-0 text-foreground placeholder:text-muted-foreground min-h-[60px] max-h-60 focus-visible:ring-0 focus-visible:ring-offset-0 pr-1 text-sm self-center resize-none"
-            disabled={isLoading}
-            rows={2}
+
+      <div className="border-t p-4">
+        <div className="flex gap-2">
+          <Input
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder={
+              selectedWorkspace 
+                ? "Ask about your code..." 
+                : "Select a workspace to enable AI assistance"
+            }
+            disabled={isProcessing || !selectedWorkspace}
+            className="flex-1"
           />
           <Button
             onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            size="sm"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground h-7 w-7 p-0 flex-shrink-0"
+            disabled={!inputValue.trim() || isProcessing || !selectedWorkspace}
+            size="icon"
           >
-            <Send className="w-3.5 h-3.5" />
+            {isProcessing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2 px-1">
-          Press Enter to send, Shift+Enter for new line
-        </p>
+        {!selectedWorkspace && (
+          <p className="text-xs text-muted-foreground mt-2">
+            Select a workspace to ask questions about your codebase
+          </p>
+        )}
       </div>
     </div>
   );

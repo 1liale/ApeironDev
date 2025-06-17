@@ -193,4 +193,25 @@ type CloudTaskAuthPayload struct {
 	Input          string       `json:"input,omitempty"`
 	R2BucketName   string       `json:"r2_bucket_name"`
 	Files          []WorkerFile `json:"files"`
+}
+
+// RAG Query payload for Cloud Tasks
+type RagQueryPayload struct {
+	JobID       string `json:"job_id"`
+	UserID      string `json:"user_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Query       string `json:"query"`
+}
+
+// RAG Indexing payload for Cloud Tasks
+type RagIndexingPayload struct {
+	JobID       string   `json:"job_id"`
+	WorkspaceID string   `json:"workspace_id"`
+	Files       []string `json:"files"`
+}
+
+// RAG Query request from frontend
+type RagQueryRequest struct {
+	Query       string `json:"query" binding:"required"`
+	WorkspaceID string `json:"workspaceId" binding:"required"`
 } 
