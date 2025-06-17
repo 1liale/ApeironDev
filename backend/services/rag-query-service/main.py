@@ -75,8 +75,8 @@ async def lifespan(app: FastAPI):
         storage_options = {
             "aws_access_key_id": settings.R2_ACCESS_KEY_ID,
             "aws_secret_access_key": settings.R2_SECRET_ACCESS_KEY,
-            "aws_endpoint_url": settings.R2_ENDPOINT_URL,
-            "aws_region": "auto",
+            "endpoint": settings.R2_ENDPOINT_URL,
+            "region": "auto",
         }
         
         db_connection = lancedb.connect(

@@ -76,7 +76,17 @@ def init_r2_client():
 def init_lancedb():
     """Initialize LanceDB."""
     global lance_db, lance_table
-    lance_db = lancedb.connect("/tmp/lancedb")
+    
+    # Configure LanceDB for Cloudflare R2
+    storage_options = {
+        "region": "auto",  # R2 uses 'auto' as region
+        "endpoint": f"https://{config.r2_account_id}.r2.cloudflarestorage.com",
+        "aws_access_key_id": config.r2_access_key_id,
+        "aws_secret_access_key": config.r2_secret_access_key,
+    }
+    
+    lancedb_uri = f"s3://{config.r2_bucket_name}/{config.lancedb_table_name}"
+    lance_db = lancedb.connect(lancedb_uri, storage_options=storage_options)
     
     # Create table if it doesn't exist
     try:
