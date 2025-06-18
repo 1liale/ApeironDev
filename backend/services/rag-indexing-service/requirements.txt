@@ -1,25 +1,26 @@
 # Core web framework
-fastapi==0.104.1
-uvicorn==0.24.0
+fastapi
+uvicorn
 
 # Database
 
 # For connecting to LanceDB on R2
-lancedb==0.3.4
-pyarrow==14.0.1
+lancedb
+pyarrow
 
 # For Generative AI embeddings
-google-generativeai==0.3.2
+google-generativeai
 
 # For environment variable and settings management
-pydantic==2.5.0
+pydantic
 pydantic-settings
 
 # For S3/R2 object storage access
-boto3==1.34.0
+boto3
 
 # For text processing and code chunking
 langchain
 langchain-text-splitters
 tree-sitter
-tree-sitter-python 
+tree-sitter-python
+numpy<2 

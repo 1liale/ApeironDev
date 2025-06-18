@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def LANCEDB_URI(self) -> str:
-        """Construct the LanceDB URI pointing directly to the table directory (kept in sync with the indexing service)."""
-        return f"s3://{self.R2_BUCKET_NAME}/{self.LANCEDB_TABLE_NAME}"
+        """Construct the LanceDB URI pointing to the root of the R2 bucket."""
+        return f"s3://{self.R2_BUCKET_NAME}"
 
 # Create a single settings instance to be used across the application
 settings = Settings() 

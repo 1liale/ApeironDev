@@ -76,26 +76,6 @@ def init_r2_client():
 def init_lancedb():
     """Initialize LanceDB connection and guarantee that the **native full-text
     search (FTS)** index exists on the `content` column.
-
-    Why here and not only in the RAG Query Service?
-    ------------------------------------------------
-    •  The indexing service is the *first* component that touches the table in
-       most workflows (it creates the table if it doesn't exist and keeps it
-       up-to-date whenever files change).
-    •  LanceDB will raise **Invalid user input: Cannot perform full text search
-       unless an INVERTED index has been created…** if a keyword search is
-       executed before the FTS index exists.  Creating (or verifying) the
-       index during startup avoids these runtime crashes.
-
-    Implementation details
-    ----------------------
-    •  ``create_fts_index("content")`` is **idempotent** – it's a cheap no-op
-       when the index already exists, and it kicks off an asynchronous build
-       otherwise.
-    •  We run this check in *both* the indexing service **and** the query
-       service for defence in depth.  That way, even if the indexing service
-       hasn't been invoked yet (new workspace, cold start), the query service
-       will still create the index on-demand instead of failing.
     """
     global lance_db, lance_table
     
@@ -105,7 +85,7 @@ def init_lancedb():
     os.environ["AWS_ENDPOINT"] = f"https://{config.r2_account_id}.r2.cloudflarestorage.com"
     os.environ["AWS_DEFAULT_REGION"] = "auto"
     
-    lancedb_uri = f"s3://{config.r2_bucket_name}/{config.lancedb_table_name}"
+    lancedb_uri = f"s3://{config.r2_bucket_name}"
     lance_db = lancedb.connect(lancedb_uri)
     
     # Create table if it doesn't exist
