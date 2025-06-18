@@ -6,8 +6,8 @@ uvicorn[standard]
 google-cloud-firestore
 
 # For connecting to LanceDB on R2
-lancedb
-pyarrow
+lancedb==0.3.4
+pyarrow==14.0.1
 
 # For environment variable and settings management
 pydantic-settings

@@ -65,8 +65,15 @@ def codebase_search_tool(query: str) -> str:
     print("  - Step 2: Performing hybrid search (vector + keyword)...")
     # Vector search with the HyDE embedding
     vector_results = table.search(query_vector).limit(10).to_list()
-    # Keyword search (BM25/FTS) with the original query
-    keyword_results = table.search(query).limit(10).to_list()
+    # Keyword search (BM25/FTS) with the original query.  If the FTS index is
+    # still being built (or missing) LanceDB raises an error – we catch it and
+    # fall back to vector-only results instead of propagating the exception to
+    # the user.
+    try:
+        keyword_results = table.search(query).limit(10).to_list()
+    except Exception as e:
+        print(f"  - Keyword search skipped (FTS index not ready?): {e}")
+        keyword_results = []
 
     # Combine and deduplicate results (use 'content' column which stores code text)
     combined_results = {res['content']: res for res in vector_results + keyword_results}.values()
