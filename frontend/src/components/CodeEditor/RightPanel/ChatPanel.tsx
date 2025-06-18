@@ -8,6 +8,10 @@ import { useJobStatus } from '@/hooks/useJobStatus';
 import { ragQuery, type RagQueryRequestBody } from '@/lib/api';
 import { auth } from '@/lib/firebase';
 import type { ChatMessage as Message } from '@/types/contexts';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import remarkGfm from 'remark-gfm';
 
 export const ChatPanel = () => {
   const {
@@ -108,8 +112,56 @@ export const ChatPanel = () => {
     }
   };
 
-  const formatContent = (content: string) => {
-    // Simple formatting for code blocks and line breaks
+  const formatContent = (content: string, role: 'user' | 'assistant') => {
+    // For assistant messages, render as markdown with syntax highlighting
+    if (role === 'assistant') {
+      return (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            code({ node, inline, className, children, ...props }: any) {
+              const match = /language-(\w+)/.exec(className || '');
+              return !inline && match ? (
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  className="rounded-md text-sm my-2"
+                >
+                  {String(children).replace(/\n$/, '')}
+                </SyntaxHighlighter>
+              ) : (
+                <code className="max-w-full bg-muted px-1 py-0.5 rounded text-sm font-mono whitespace-pre-wrap break-all" {...props}>
+                  {children.toString()}
+                </code>
+              );
+            },
+            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+            ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+            li: ({ children }) => <li className="text-sm">{children}</li>,
+            h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-base font-semibold mb-2">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+            blockquote: ({ children }) => (
+              <blockquote className="border-l-4 border-muted-foreground/20 pl-4 italic mb-2">
+                {children}
+              </blockquote>
+            ),
+            a: ({ href, children }) => (
+              <a href={href} className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      );
+    }
+
+    // For user messages, use simple line break formatting
     return content.split('\n').map((line, index) => (
       <span key={index}>
         {line}
@@ -155,14 +207,14 @@ export const ChatPanel = () => {
                     <User className="h-4 w-4 mt-1 flex-shrink-0" />
                   )}
                   <div className="flex-1">
-                    <div className="text-sm">
+                    <div className="text-sm whitespace-pre-wrap break-all">
                       {message.isProcessing ? (
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           <span>{message.content}</span>
                         </div>
                       ) : (
-                        formatContent(message.content)
+                        formatContent(message.content, message.role)
                       )}
                     </div>
                     <div className="text-xs opacity-70 mt-1">

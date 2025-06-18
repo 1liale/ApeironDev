@@ -68,8 +68,8 @@ def codebase_search_tool(query: str) -> str:
     # Keyword search (BM25/FTS) with the original query
     keyword_results = table.search(query).limit(10).to_list()
 
-    # Combine and deduplicate results
-    combined_results = {res['text']: res for res in vector_results + keyword_results}.values()
+    # Combine and deduplicate results (use 'content' column which stores code text)
+    combined_results = {res['content']: res for res in vector_results + keyword_results}.values()
     print(f"  - Found {len(list(combined_results))} unique snippets from hybrid search.")
 
     if not combined_results:
@@ -79,7 +79,7 @@ def codebase_search_tool(query: str) -> str:
     print("  - Step 3: Reranking results with Cohere...")
     # LangChain's CohereRerank expects a list of Documents
     documents_to_rerank = [
-        Document(page_content=res['text'], metadata={"file_path": res.get('file_path', 'Unknown file')})
+        Document(page_content=res['content'], metadata={"file_path": res.get('file_path', 'Unknown file')})
         for res in combined_results
     ]
     
