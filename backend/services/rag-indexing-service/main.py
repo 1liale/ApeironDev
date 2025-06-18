@@ -100,7 +100,7 @@ def init_lancedb():
         except Exception as e:
             # If the index already exists or another benign error occurs, just log it
             logger.warning(f"FTS index creation skipped or failed: {e}")
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         import pyarrow as pa
         schema = pa.schema([
             pa.field("file_path", pa.string()),
