@@ -90,8 +90,15 @@ def init_lancedb():
     try:
         lance_table = lance_db.open_table(config.lancedb_table_name)
         logger.info(f"Opened existing LanceDB table: {config.lancedb_table_name}")
+
+        # Ensure there is a full-text (inverted) index on the 'content' column for keyword search
+        try:
+            lance_table.create_fts_index("content")  # no-op if index already exists
+            logger.info("Verified/created FTS index on 'content' column")
+        except Exception as e:
+            # If the index already exists or another benign error occurs, just log it
+            logger.warning(f"FTS index creation skipped or failed: {e}")
     except FileNotFoundError:
-        # Create table with schema
         import pyarrow as pa
         schema = pa.schema([
             pa.field("file_path", pa.string()),
@@ -101,6 +108,14 @@ def init_lancedb():
         ])
         lance_table = lance_db.create_table(config.lancedb_table_name, schema=schema)
         logger.info(f"Created new LanceDB table: {config.lancedb_table_name}")
+
+        # Ensure there is a full-text (inverted) index on the 'content' column for keyword search
+        try:
+            lance_table.create_fts_index("content")  # no-op if index already exists
+            logger.info("Verified/created FTS index on 'content' column")
+        except Exception as e:
+            # If the index already exists or another benign error occurs, just log it
+            logger.warning(f"FTS index creation skipped or failed: {e}")
 
 def init_genai():
     """Initialize Google Generative AI."""

@@ -24,7 +24,7 @@ export const useJobStatus = (
           const { status, output, error: jobError } = jobData;
 
           if (status === "completed") {
-            onJobEnd(`\n${output}`);
+            onJobEnd(`${output}`);
           } else if (status === "failed") {
             onJobEnd(`Execution Failed: ${jobError || "Unknown error"}`);
           }
