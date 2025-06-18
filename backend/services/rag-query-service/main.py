@@ -2,6 +2,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 import uvicorn
+from datetime import timedelta
 
 import google.generativeai as genai
 import lancedb
@@ -79,6 +80,43 @@ async def lifespan(app: FastAPI):
         
         # Initialize LanceDB connection
         db_connection = lancedb.connect(settings.LANCEDB_URI)
+        
+        # ------------------------------------------------------------------
+        # Guarantee Full-Text Search (FTS) support
+        # ------------------------------------------------------------------
+        # The code-search tool relies on keyword search (`table.search(str)`),
+        # which requires an INVERTED/FTS index on at least one string column.
+        # We proactively verify (and, if necessary, create) that index here so
+        # the query service never crashes with
+        #   "Cannot perform full text search unless an INVERTED index has been created…"
+        # This call is idempotent – if the index already exists it's a cheap
+        # no-op; otherwise LanceDB launches an async job to build it.  We also
+        # optionally wait for the index to be ready to avoid race conditions
+        # on the very first query after deployment.
+
+        try:
+            table = db_connection.open_table(settings.LANCEDB_TABLE_NAME)
+
+            # Create/verify the index (native FTS) on the `content` column.
+            table.create_fts_index("content")  # no-op if exists
+
+            # Wait (up to 2 minutes) for the index build to finish so that
+            # early queries don't fail.  If the method isn't available (older
+            # SDK) or times out, we just log a warning – vector search will
+            # still work and keyword search will succeed once the index is
+            # built in the background.
+            try:
+                table.wait_for_index(["content_idx"], timeout=timedelta(seconds=120))
+                logging.info("FTS index 'content_idx' verified and ready.")
+            except AttributeError:
+                logging.info("wait_for_index not available in current LanceDB SDK; proceeding without explicit wait.")
+            except Exception as e:
+                logging.warning(f"FTS index build not confirmed within timeout: {e}")
+
+        except FileNotFoundError:
+            logging.error(f"LanceDB table '{settings.LANCEDB_TABLE_NAME}' not found – keyword search will be unavailable until the indexing service creates the table.")
+        except Exception as e:
+            logging.warning(f"Unable to verify/create FTS index: {e}")
         
         # Initialize embedding model
         embedding_model = GoogleGenerativeAIEmbeddings(
