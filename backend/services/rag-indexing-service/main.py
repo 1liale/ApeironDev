@@ -73,56 +73,53 @@ def init_r2_client():
     )
     logger.info("R2 client initialized")
 
-def init_lancedb():
-    """Initialize LanceDB connection and guarantee that the **native full-text
-    search (FTS)** index exists on the `content` column.
+def init_genai():
+    """Initialize Google Generative AI."""
+    genai.configure(api_key=config.google_api_key)
+    logger.info("Google Generative AI initialized")
+
+# New helper to get workspace-specific LanceDB table
+
+def get_workspace_table(workspace_id: str):
+    """Return (and if necessary create) the LanceDB table scoped to the given workspace.
+
+    The table is stored under the prefix `<workspace_id>/` inside the R2 bucket so that
+    each workspace maintains its own isolated vector index.
     """
-    global lance_db, lance_table
-    
-    # Set environment variables for LanceDB S3-compatible storage
+    # Ensure LanceDB knows how to talk to Cloudflare R2 (S3-compatible)
     os.environ["AWS_ACCESS_KEY_ID"] = config.r2_access_key_id
     os.environ["AWS_SECRET_ACCESS_KEY"] = config.r2_secret_access_key
     os.environ["AWS_ENDPOINT"] = f"https://{config.r2_account_id}.r2.cloudflarestorage.com"
     os.environ["AWS_DEFAULT_REGION"] = "auto"
-    
-    lancedb_uri = f"s3://{config.r2_bucket_name}"
-    lance_db = lancedb.connect(lancedb_uri)
-    
-    # Create table if it doesn't exist
-    try:
-        lance_table = lance_db.open_table(config.lancedb_table_name)
-        logger.info(f"Opened existing LanceDB table: {config.lancedb_table_name}")
 
-        # Ensure there is a full-text (inverted) index on the 'content' column for keyword search
+    # Connect to a workspace-specific URI (s3://<bucket>/<workspace_id>)
+    lancedb_uri = f"s3://{config.r2_bucket_name}/{workspace_id}"
+    db = lancedb.connect(lancedb_uri)
+
+    # Try opening existing table; otherwise create it.
+    try:
+        table = db.open_table(config.lancedb_table_name)
+        # Ensure FTS index exists (no-op if already present)
         try:
-            lance_table.create_fts_index("content")  # no-op if index already exists
-            logger.info("Verified/created FTS index on 'content' column")
+            table.create_fts_index("content")
         except Exception as e:
-            # If the index already exists or another benign error occurs, just log it
-            logger.warning(f"FTS index creation skipped or failed: {e}")
+            logger.warning(f"FTS index creation skipped or failed for workspace {workspace_id}: {e}")
     except (FileNotFoundError, ValueError):
         import pyarrow as pa
         schema = pa.schema([
             pa.field("file_path", pa.string()),
             pa.field("content", pa.string()),
             pa.field("workspace_id", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), 768))  # Gemini embedding dimension
+            pa.field("vector", pa.list_(pa.float32(), 768)),  # Gemini embedding dimension
         ])
-        lance_table = lance_db.create_table(config.lancedb_table_name, schema=schema)
-        logger.info(f"Created new LanceDB table: {config.lancedb_table_name}")
-
-        # Ensure there is a full-text (inverted) index on the 'content' column for keyword search
+        table = db.create_table(config.lancedb_table_name, schema=schema)
+        # Create FTS index on first creation
         try:
-            lance_table.create_fts_index("content")  # no-op if index already exists
-            logger.info("Verified/created FTS index on 'content' column")
+            table.create_fts_index("content")
         except Exception as e:
-            # If the index already exists or another benign error occurs, just log it
-            logger.warning(f"FTS index creation skipped or failed: {e}")
+            logger.warning(f"FTS index creation failed for new workspace {workspace_id}: {e}")
 
-def init_genai():
-    """Initialize Google Generative AI."""
-    genai.configure(api_key=config.google_api_key)
-    logger.info("Google Generative AI initialized")
+    return table
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -135,7 +132,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize clients
     init_r2_client()
-    init_lancedb()
+    # init_lancedb()  # Per-workspace tables are created on-demand instead
     init_genai()
     
     logger.info("RAG Indexing Service startup complete")
@@ -187,6 +184,9 @@ def index_files(workspace_id: str, files: List[WorkerFile]) -> Dict[str, Any]:
     skipped_count = 0
     errors = []
     
+    # Obtain workspace-specific LanceDB table (creates it if missing)
+    table = get_workspace_table(workspace_id)
+    
     for file_info in files:
         try:
             # Download file content using the R2 object key
@@ -202,7 +202,7 @@ def index_files(workspace_id: str, files: List[WorkerFile]) -> Dict[str, Any]:
             
             # Delete existing records for this file
             try:
-                lance_table.delete(f"workspace_id = '{workspace_id}' AND file_path = '{file_info.file_path}'")
+                table.delete(f"workspace_id = '{workspace_id}' AND file_path = '{file_info.file_path}'")
             except Exception as e:
                 logger.warning(f"No existing records to delete for {file_info.file_path}: {e}")
             
@@ -213,7 +213,7 @@ def index_files(workspace_id: str, files: List[WorkerFile]) -> Dict[str, Any]:
                 "workspace_id": workspace_id,
                 "vector": embedding
             }]
-            lance_table.add(data)
+            table.add(data)
             
             indexed_count += 1
             logger.info(f"Successfully indexed file: {file_info.file_path}")

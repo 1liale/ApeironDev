@@ -205,6 +205,28 @@ async def handle_cloud_task(request: Request):
         
         logging.info(f"Processing Cloud Task query for job {payload.job_id}")
         
+        # --------------------------------------------------------------
+        # Workspace-specific LanceDB connection
+        # --------------------------------------------------------------
+        try:
+            workspace_db_uri = f"s3://{settings.R2_BUCKET_NAME}/{payload.workspace_id}"
+            db_conn = lancedb.connect(workspace_db_uri)
+            try:
+                table = db_conn.open_table(settings.LANCEDB_TABLE_NAME)
+                # Verify/create FTS index (no-op if exists)
+                try:
+                    table.create_fts_index("content")
+                except Exception as e:
+                    logging.warning(f"FTS index check failed for workspace {payload.workspace_id}: {e}")
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Vector index not found for workspace_id {payload.workspace_id}.")
+
+            # Expose this connection to the LangChain tools
+            dependencies.db_connection = db_conn
+        except Exception as e:
+            logging.error(f"Failed to connect to LanceDB for workspace {payload.workspace_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to connect to workspace vector store.")
+
         # Ensure Firestore client is available
         if not get_firestore_client():
             raise HTTPException(status_code=503, detail="Firestore client not available.")
